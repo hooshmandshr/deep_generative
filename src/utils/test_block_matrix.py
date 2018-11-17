@@ -126,6 +126,7 @@ def test_cholesky_broadcast():
     offdiag = np.random.rand(num_mat, time - 1, dim, dim)
 
     b = np.random.rand(num_mat, 7, time * dim)
+    b_unfold = b.reshape([num_mat, 7, time, dim])
     # Setting up tensors for the corresponding blocks.
     with tf.Graph().as_default():
         bd_tensor = bm.BlockTriDiagonalMatrix(
@@ -136,12 +137,16 @@ def test_cholesky_broadcast():
         chl_offdiag_tensor = chl_matrix.offdiag_block
         # Inverse Cholesky solve.
         solve_tensor = chl_matrix.solve(tf.constant(b))
+        solve_tensor_unfold = chl_matrix.solve(tf.constant(b_unfold))
         chl_matrix.transpose(in_place=True)
         solve_transpose_tensor = chl_matrix.solve(tf.constant(b))
+        solve_transpose_tensor_unfold = chl_matrix.solve(tf.constant(b_unfold))
         with tf.Session() as sess:
             chl_res_diag, chl_res_offdiag, solve_res, solve_t_res = sess.run(
                 [chl_diag_tensor, chl_offdiag_tensor, solve_tensor,
                     solve_transpose_tensor])
+            solve_res_unfold, solve_t_res_unfold = sess.run(
+                    [solve_tensor_unfold, solve_transpose_tensor_unfold])
     dense_cholesky = np.zeros([num_mat, time * dim, time * dim])
     dense_result = np.zeros([num_mat, time * dim, time * dim])
     for i in range(num_mat):
@@ -161,6 +166,8 @@ def test_cholesky_broadcast():
     assert np.allclose(
             dense_solve_cholesky.transpose([0, 2, 1]),
             solve_res), 'Cholesky inverse broadcast'
+    assert np.allclose(
+            solve_res, solve_res_unfold.reshape([num_mat, 7, time * dim]))
 
     # Solve choleskey system given b if the matrix is transposed. In otherwords
     # we want the result of A^{-T}b.
@@ -172,6 +179,8 @@ def test_cholesky_broadcast():
     assert np.allclose(
             dense_solve_cholesky.transpose([0, 2, 1]),
             solve_t_res), 'Cholesky transpose inverse broadcast'
+    assert np.allclose(
+            solve_t_res, solve_t_res_unfold.reshape([num_mat, 7, time * dim]))
 
 
 if __name__ == "__main__":

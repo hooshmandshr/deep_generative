@@ -34,11 +34,16 @@ class NormalizingFlow(Transform):
         """
         pass
 
+    @staticmethod
+    def get_param_shape(**kwargs):
+        """Gets the shape of the governing parameters of the transform."""
+        raise NotImplementedError(
+                "Abstract method that each sub-class has to implement.")
 
 class PlanarFlow(NormalizingFlow):
 
-    def __init__(self, dim, num=1, non_linearity=tf.tanh, gov_param=None,
-            initial_value=None, name=None):
+    def __init__(self, dim, non_linearity=tf.tanh, gov_param=None,
+            initial_value=None, enforce_inverse=True, name=None):
         """Sets up the universal properties of any transformation function.
 
         Governing parameters of the transformation is set in the constructor.
@@ -47,21 +52,21 @@ class PlanarFlow(NormalizingFlow):
         -------
         dim: int
             dimensionality of the input code/variable and output variable.
-        num: int
-            Number of total different normalizing flows to be applied at once.
         gov_param: tf.Tensor
             In case that parameters of the transformation are governed by
             another tensor.
         initial_value: numpy.ndarray
             Initial value of the transformation variable.
+        enforce_inverse: bool
+            If true, the parameters are changed slightly to guarantee
+            invertibility.
         """
         super(PlanarFlow, self).__init__(dim=dim, gov_param=gov_param,
                 initial_value=initial_value, name=name)
         # Set the rest of the attributes.
         self.non_linearity = non_linearity
-        self.num = num
         # Make sure the shape of the parameters is correct.
-        self.param_shape = (self.num, 2 * self.dim + 1)
+        self.param_shape = PlanarFlow.get_param_shape(dim=dim)
         self.check_param_shape()
 
         # Partition the variable into variables of the planar flow.
@@ -69,8 +74,10 @@ class PlanarFlow(NormalizingFlow):
         self.u = tf.slice(self.var, [0, self.dim], [-1, self.dim])
         self.b = tf.slice(self.var, [0, 2 * self.dim], [-1, 1])
         # Guarantee invertibility of the forward transform.
-        #self.enforce_invertiblity()
         self.u_bar = self.u
+        if enforce_inverse:
+            self.enforce_invertiblity()
+
         # Tensor map for keeping track of computation redundancy.
         # If an operation on a tensor has been done before, do not redo it.
         self.tensor_map = {}
@@ -96,11 +103,8 @@ class PlanarFlow(NormalizingFlow):
         if x in self.tensor_map:
             return self.tensor_map[x]
 
-        if self.num == 1:
-            result = tf.matmul(x, self.w, transpose_b=True) + self.b
-        else:
-            result = tf.matmul(x, tf.expand_dims(self.w, 2)) + tf.expand_dims(
-                    self.b, 2)
+        result = tf.matmul(x, self.w, transpose_b=True) + self.b
+
         self.tensor_map[x] = result
         return result
 
@@ -110,16 +114,14 @@ class PlanarFlow(NormalizingFlow):
         params:
         -------
         x: tf.Tensor
-            if self.num is (the number of total flows) 1 the input tensor must
-            have shape (None, self.dim). If self.num > 1 the shape of input
-            must have (self.num, None, self.dim).
+            Input tensor for which the transformation is computed.
+
+        returns:
+        --------
+        tf.Tensor.
         """
         dial = self.inner_prod(x)
-        if self.num == 1:
-            result = x + self.u_bar * self.non_linearity(dial)
-        else:
-            result = x + tf.expand_dims(self.u_bar, 1) * self.non_linearity(
-                    dial)
+        result = x + self.u_bar * self.non_linearity(dial)
         return result
 
     def log_det_jacobian(self, x):
@@ -128,32 +130,121 @@ class PlanarFlow(NormalizingFlow):
         params:
         -------
         x: tensorflow.Tensor
-            if self.num is (the number of total flows) 1 the input tensor must
-            have shape (None, self.dim). If self.num > 1 the shape of input
-            must have (self.num, None, self.dim).
+            Input tensor for which the log-det-jacobian is computed.
 
         returns:
         --------
         tf.Tensor for log-det-jacobian of the transformation given x.
         """
         dial = self.inner_prod(x)
-        if self.num == 1:
-            psi = self.non_linearity_derivative(dial)
-            det_jac = tf.matmul(self.u_bar, self.w, transpose_b=True) * psi
-            result = tf.squeeze(tf.log(tf.abs(1 + det_jac)))
-        else:
-            psi = self.non_linearity_derivative(dial)
-            dot = tf.reduce_sum(self.u_bar * self.w, axis=1, keepdims=True)
-            dot = tf.expand_dims(dot, 1)
-            det_jac = dot * psi
-            result = tf.squeeze(tf.log(tf.abs(1 + det_jac)))
+
+        psi = self.non_linearity_derivative(dial)
+        det_jac = tf.matmul(self.u_bar, self.w, transpose_b=True) * psi
+        result = tf.squeeze(tf.log(tf.abs(1 + det_jac)))
+
         return result
+
+    @staticmethod
+    def get_param_shape(**kwargs):
+        """Gets the shape of the governing parameters of the transform."""
+        dim = kwargs["dim"]
+        return (1, 2 * dim + 1)
+
+
+class MultiLayerPlanarFlow(NormalizingFlow):
+
+    def __init__(self, dim, num_layer, non_linearity=tf.tanh,
+            gov_param=None, initial_value=None, name=None):
+        """Sets up the universal properties of any transformation function.
+
+        Governing parameters of the transformation is set in the constructor.
+
+        params:
+        -------
+        dim: int
+            dimensionality of the input code/variable and output variable.
+        num_layer: int
+            Number of successive layers of palanr flow transformation.
+        gov_param: tf.Tensor
+            In case that parameters of the transformation are governed by
+            another tensor.
+        initial_value: numpy.ndarray
+            Initial value of the transformation variable.
+        enforce_inverse: bool
+            If true, the parameters are changed slightly to guarantee
+            invertibility.
+        """
+        super(MultiLayerPlanarFlow, self).__init__(dim=dim, gov_param=gov_param,
+                initial_value=initial_value, name=name)
+        # Set the rest of the attributes.
+        self.non_linearity = non_linearity
+        self.num_layer = num_layer
+        # Make sure the shape of the parameters is correct.
+        #self.param_shape = (self.num_layer, self.num, 2 * self.dim + 1)
+        self.param_shape = MultiLayerPlanarFlow.get_param_shape(
+                num_layer=self.num_layer, dim=self.dim)
+        self.check_param_shape()
+        # Create a flow transform for every layer.
+        self.layers = []
+        for i in range(self.num_layer):
+            layer_gov_param = self.var[i]
+            self.layers.append(PlanarFlow(
+                dim=self.dim, non_linearity=non_linearity,
+                gov_param=layer_gov_param, name=name))
+
+    def operator(self, x):
+        """Given x applies the Planar flow transformation to the input.
+
+        params:
+        -------
+        x: tf.Tensor
+
+        """
+        result = x
+        for layer in self.layers:
+            result = layer.operator(result)
+        return result
+
+    def log_det_jacobian(self, x):
+        """Computes log-det-Jacobian for combination of inputs, flows.
+
+        params:
+        -------
+        x: tensorflow.Tensor
+
+        returns:
+        --------
+        tf.Tensor for log-det-jacobian of the transformation given x.
+        """
+        result = 0.
+        # Tensor for intermediate transformation results.
+        inter_trans = x
+        for layer in self.layers:
+            result += layer.log_det_jacobian(inter_trans)
+            inter_trans = layer.operator(inter_trans)
+        return result
+
+    @staticmethod
+    def get_param_shape(**kwargs):
+        """Gets the shape of the governing parameters of the transform.
+
+        Parameters:
+        -----------
+        **kwargs:
+            Paramters of the constructor that must include the following:
+                dim,
+                num,
+                num_layer
+        """
+        num_layer, dim = kwargs["num_layer"], kwargs["dim"]
+
+        return (num_layer, 1, 2 * dim + 1) 
 
 
 class TimeAutoRegressivePlanarFlow(NormalizingFlow):
     """Class that implements PlanarFlow auto-regressive transform."""
 
-    def __init__(self, dim, time, num=1, num_sweep=1, num_layer=1,
+    def __init__(self, dim, time, num_sweep=1, num_layer=1,
             non_linearity=tf.tanh, gov_param=None, initial_value=None,
             name=None):
         """Sets up the universal properties of any transformation function.
@@ -184,13 +275,12 @@ class TimeAutoRegressivePlanarFlow(NormalizingFlow):
                 name=name)
         # Set the rest of the attributes.
         self.non_linearity = non_linearity
-        self.num = num
         self.time = time
         self.num_layer = num_layer
         self.num_sweep = num_sweep
         # Make sure the shape of the parameters is correct.
         self.param_shape = (self.num_sweep, self.time - 1, self.num_layer,
-                self.num, 2 * 2 * self.dim + 1)
+                1, 2 * 2 * self.dim + 1)
         self.check_param_shape()
         # Storing all the individual flows in this structure.
         self.set_up_sweep_layer_flows()
@@ -214,7 +304,7 @@ class TimeAutoRegressivePlanarFlow(NormalizingFlow):
                     if self.initial_value is not None:
                         init_value = self.initial_value[sweep, time, layer, :, :]
                     flow = PlanarFlow(
-                            dim=self.dim * 2, num=self.num,
+                            dim=self.dim * 2,
                             non_linearity=self.non_linearity,
                             gov_param=gov_param, initial_value=init_value)
                     self.sweep_time_layer_flow[-1][-1].append(flow)
@@ -231,12 +321,9 @@ class TimeAutoRegressivePlanarFlow(NormalizingFlow):
         s = x.shape
         # Last two dimensions of the expected shape.
         l_dim = (self.time, self.dim)
-        if self.num == 1:
-            if not (len(s) == 3 and s[1:] == l_dim):
-                raise ValueError("Input shape must be (?, time, dim).")
-        else:
-            if not (len(s) == 4 and s[2:] == l_dim and s[0].value == self.num):
-                raise ValueError("Input shape must be (num, ?, time, dim).")
+
+        if not (len(s) == 3 and s[1:] == l_dim):
+            raise ValueError("Input shape must be (?, time, dim).")
 
     def time_slice(self, x):
         """Get time slice of input for a particular time.
@@ -246,10 +333,7 @@ class TimeAutoRegressivePlanarFlow(NormalizingFlow):
         x: tf.Tensor
             Input tensor which is time ordered.
         """
-        if self.num == 1:
-            return [x[:, t, :] for t in range(self.time)]
-        else:
-            return [x[:, :, t, :] for t in range(self.time)]
+        return [x[:, t, :] for t in range(self.time)]
 
     def stitch_time_slice(self, x):
         """Stitch time sliced input/output together into a single tensor.
@@ -260,8 +344,6 @@ class TimeAutoRegressivePlanarFlow(NormalizingFlow):
             Each member of the list has either shape (num, ?, dim) or (?, dim).
         """
         expand_axis = 1
-        if self.num > 1:
-            expand_axis = 2
         return tf.concat(
                 [tf.expand_dims(y, axis=expand_axis) for y in x],
                 axis=expand_axis)
@@ -293,12 +375,9 @@ class TimeAutoRegressivePlanarFlow(NormalizingFlow):
                     flow = self.sweep_time_layer_flow[sweep][time][layer]
                     time_subset = flow.operator(time_subset)
                     log_det_jac += flow.log_det_jacobian(time_subset )
-                if self.num == 1:
-                    time_slice[time] = time_subset[:, :self.dim]
-                    time_slice[time + 1] = time_subset[:, self.dim:]
-                else:
-                    time_slice[time] = time_subset[:, :, :self.dim]
-                    time_slice[time + 1] = time_subset[:, :, self.dim:]
+
+                time_slice[time] = time_subset[:, :self.dim]
+                time_slice[time + 1] = time_subset[:, self.dim:]
         # Stitch the time slices back together into a single tensor.
         self.log_det_jac_map[x] = log_det_jac
         return self.stitch_time_slice(time_slice)

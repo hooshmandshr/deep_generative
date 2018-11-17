@@ -111,11 +111,16 @@ class MarkovLatentDynamics(MarkovDynamics):
     def log_prob(self, x, y):
         """Samples from the full-joint model p(x, y).
 
+        x and y should both have the same inner dimension. If not, broadcasting
+        is done to make the shapes match. For instance, if input shapes are
+        (M, N, T, D_x) and (N, T, D_Y), y is duplicated M times to correspond
+        to the shape of x.
+
         params:
         -------
-        x: tf.Tensor with shape (?, T, D_x)
+        x: tf.Tensor with shape (N, T, D_x)
             Tensor corresponding to the paths in observations space.
-        y: tf.Tensor with shape (?, T, D_y)
+        y: tf.Tensor with shape (N, T, D_y)
             Tensor corresponding to the paths in latent space.
 
         returns:
@@ -123,16 +128,33 @@ class MarkovLatentDynamics(MarkovDynamics):
         tf.Tensor with shape (?), corresponding to the log-probability of
         joint-distribution given the input.
         """
-        prior_log_prob = super(MarkovLatentDynamics, self).log_prob(x=y)
-        return tf.reduce_sum(self.emission_model.log_prob(
-                x=x, y=y)) + prior_log_prob
+        out_shape = None
+        if not x.shape[:-2] == y.shape[:-2]:
+            if len(x.shape) + 1 == len(y.shape):
+                out_shape = y.shape[0].value
+                x = tf.reshape(tf.concat(
+                        [tf.expand_dims(x, axis=0) for i in range(out_shape)],
+                        axis=0), [-1] + x.shape[-2:].as_list())
+                y = tf.reshape(y, [-1] + y.shape[-2:].as_list())
+            else:
+                raise ValueError("Shape of inputs x, y does not match.")
 
-    def sample(self, n_samples, time_steps=None):
+        prior_log_prob = super(MarkovLatentDynamics, self).log_prob(x=y)
+        log_p = tf.reduce_sum(self.emission_model.log_prob(
+                x=x, y=y)) + prior_log_prob
+        if out_shape is not None:
+            return tf.reshape(log_p, [out_shape, -1])
+        return log_p
+
+    def sample(self, n_samples, y=None, time_steps=None):
         """Samples from the full-joint model p(x, y).
 
         params:
         -------
         n_samples: int
+        y: tf.Tensor or None
+            if None, a sample is drawn from the joint distribution p(x, y).
+            Otherwise, samples are drawn from conditional p(x|y).
         time_teps: int
 
         returns:
@@ -142,17 +164,22 @@ class MarkovLatentDynamics(MarkovDynamics):
         """
         if time_steps is None:
             time_steps = self.time_steps
-        latent_path = super(MarkovLatentDynamics, self).sample(
-                n_samples=n_samples)
+        latent_path = y
+        if latent_path is None:
+            latent_path = super(MarkovLatentDynamics, self).sample(
+                    n_samples=n_samples)
         observation_path = self.emission_model.sample(
             n_samples=(), y=latent_path)
+
+        if y is not None:
+            return observation_path
         return latent_path, observation_path
 
 
-class KalmanFilter(MarkovLatentDynamics):
+class LatentLinearDynamicalSystem(MarkovLatentDynamics):
     """Class for implementation of Kalman-Filter generative model."""
 
-    def __init__(self, lat_dim, obs_dim, time_steps,
+    def __init__(self, lat_dim, obs_dim, time_steps, emission_model,
             init_transition_matrix_bias=None, full_covariance=True):
         """Sets up the parameters of the Kalman filter sets up super class.
 
@@ -161,6 +188,8 @@ class KalmanFilter(MarkovLatentDynamics):
         lat_dim: int
         obs_dim: int
         time_steps: int
+        emission_model: model
+            Describing the relation of the model.
         init_transition_matrix_bias: np.ndarray shape (lat_dim + 1, lat_dim)
             Initial value for the transition matrix.
         full_covariance: True
@@ -177,18 +206,96 @@ class KalmanFilter(MarkovLatentDynamics):
             dist = tf.contrib.distributions.MultivariateNormalDiag
             cov_0 = tf.nn.softplus(tf.Variable(np.ones(lat_dim)))
 
+        # Transition matrix for the linear function.
+        if init_transition_matrix_bias is None:
+            self.transition_matrix = tf.Variable(
+                    np.random.normal(0, 1, [lat_dim + 1, lat_dim]))
+        else:
+            self.transition_matrix = tf.Variable(init_transition_matrix_bias)
         prior = dist(mean_0, cov_0)
         # Transition model
         transition_model = ReparameterizedDistribution(
                 out_dim=lat_dim, in_dim=lat_dim, transform=LinearTransform,
                 distribution=dist, reparam_scale=False,
-                initial_value=init_transition_matrix_bias)
+                gov_param=self.transition_matrix)
 
-        # Emission model
-        emission_model = ReparameterizedDistribution(
-                out_dim=obs_dim, in_dim=lat_dim, transform=LinearTransform,
-                distribution=dist, reparam_scale=False)
-        super(KalmanFilter, self).__init__(
+        super(LatentLinearDynamicalSystem, self).__init__(
                 init_model=prior, transition_model=transition_model,
                 emission_model=emission_model, time_steps=time_steps)
+
+
+class KalmanFilter(LatentLinearDynamicalSystem):
+    """Class for implementation of Kalman-Filter generative model."""
+
+    def __init__(self, lat_dim, obs_dim, time_steps,
+            init_transition_matrix_bias=None, full_covariance=True):
+        """Sets up the parameters of the Kalman filter sets up super class.
+
+        params:
+        -------
+        lat_dim: int
+        obs_dim: int
+        time_steps: int
+        init_transition_matrix_bias: np.ndarray shape (lat_dim + 1, lat_dim)
+            Initial value for the transition matrix.
+        full_covariance: bool
+            Covariance matrices are full if True, otherwise, diagonal.
+        """
+        mean_0 = np.random.normal(0, 1, lat_dim)
+        if full_covariance:
+            dist = tf.contrib.distributions.MultivariateNormalTriL
+        else:
+            dist = tf.contrib.distributions.MultivariateNormalDiag
+
+        self.emission_matrix = tf.Variable(
+                np.random.normal(0, 1, [lat_dim + 1, obs_dim]))
+        # Emission model is reparameterized Gaussian with linear
+        # transformation.
+        emission_model = ReparameterizedDistribution(
+                out_dim=obs_dim, in_dim=lat_dim, transform=LinearTransform,
+                distribution=dist, reparam_scale=False,
+                gov_param=self.emission_matrix)
+
+        super(KalmanFilter, self).__init__(
+                lat_dim=lat_dim, obs_dim=obs_dim, time_steps=time_steps,
+                emission_model=emission_model,
+                init_transition_matrix_bias=init_transition_matrix_bias,
+                full_covariance=full_covariance)
+
+
+class FLDS(LatentLinearDynamicalSystem):
+    """Class for implementation of Kalman-Filter generative model."""
+
+    def __init__(self, lat_dim, obs_dim, time_steps, nonlinear_transform,
+            init_transition_matrix_bias=None, full_covariance=True, **kwargs):
+        """Sets up the parameters of the Kalman filter sets up super class.
+
+        params:
+        -------
+        lat_dim: int
+        obs_dim: int
+        time_steps: int
+        nonlinear_transform: transform.Transform type
+        init_transition_matrix_bias: np.ndarray shape (lat_dim + 1, lat_dim)
+            Initial value for the transition matrix.
+        full_covariance: bool
+            Covariance matrices are full if True, otherwise, diagonal.
+        """
+        mean_0 = np.random.normal(0, 1, lat_dim)
+        if full_covariance:
+            dist = tf.contrib.distributions.MultivariateNormalTriL
+        else:
+            dist = tf.contrib.distributions.MultivariateNormalDiag
+
+        # Emission model is reparameterized Gaussian with linear
+        # transformation.
+        emission_model = ReparameterizedDistribution(
+                out_dim=obs_dim, in_dim=lat_dim, transform=nonlinear_transform,
+                distribution=dist, reparam_scale=False, **kwargs)
+
+        super(FLDS, self).__init__(
+                lat_dim=lat_dim, obs_dim=obs_dim, time_steps=time_steps,
+                emission_model=emission_model,
+                init_transition_matrix_bias=init_transition_matrix_bias,
+                full_covariance=full_covariance)
 

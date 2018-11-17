@@ -34,14 +34,14 @@ def test_planar_flow():
     dim = 3
     n_example = 1000
 
-    def run_tf_flow(input_val, dim, num=1, init_val=None, gov_param=None):
+    def run_tf_flow(input_val, dim, init_val=None, gov_param=None):
         with tf.Graph().as_default():
             g_param = None
             if gov_param is not None:
                 g_param = tf.constant(gov_param)
             flow = PlanarFlow(
-                    dim=dim, num=num, initial_value=init_val,
-                    gov_param=g_param)
+                    dim=dim, initial_value=init_val,
+                    gov_param=g_param, enforce_inverse=False)
             x = tf.constant(input_val)
             y = flow.operator(x)
             z = flow.log_det_jacobian(x)
@@ -59,28 +59,26 @@ def test_planar_flow():
     assert output.shape == (n_example, dim), 'Testing output shape.'
     assert output_det_jacobian.shape == (n_example,), 'Testing log det jacobian.'
 
-    # Make sure the shapes are consistent.
-    num = 4
 
-    input_ = np.random.rand(num, n_example, dim)
+    input_ = np.random.rand(n_example, dim)
 
-    output, output_det_jacobian = run_tf_flow(input_, dim=dim, num=num)
+    output, output_det_jacobian = run_tf_flow(input_, dim=dim)
 
     print "Multiple flow transformation." 
-    assert output.shape == (num, n_example, dim), 'Testing output shape.'
-    assert output_det_jacobian.shape == (num, n_example), 'Testing log det jacobian.'
+    assert output.shape == (n_example, dim), 'Testing output shape.'
+    assert output_det_jacobian.shape == (n_example,), 'Testing log det jacobian.'
 
     # Making sure assigning governing parameters works.
-    params = np.random.rand(num, 2 * dim + 1)
+    params = np.random.rand(1, 2 * dim + 1)
 
     output, output_det_jacobian = run_tf_flow(
-            input_, dim=dim, num=num, gov_param=params)
+            input_, dim=dim, gov_param=params)
     # Make sure the shapes are consistent.
     print "Multiple flow transformation correct computation, set parameters."
     assert np.allclose(output, planar_flow(params, input_))
 
     output, output_det_jacobian = run_tf_flow(
-            input_, dim=dim, num=num, init_val=params)
+            input_, dim=dim, init_val=params)
     # Make sure the shapes are consistent.
     print "Multiple flow transformation result check, initial values."
     assert np.allclose(output, planar_flow(params, input_))
@@ -96,13 +94,13 @@ def test_autoregressive_flow():
     n_sweep = 2
     n_layer = 3
 
-    def run_tf_flow(input_val, dim, time, num=1, gov_param=None):
+    def run_tf_flow(input_val, dim, time, gov_param=None):
         with tf.Graph().as_default():
             g_param = None
             if gov_param is not None:
                 g_param = tf.constant(gov_param)
             flow = TimeAutoRegressivePlanarFlow(dim=dim, time=time,
-                    num=num, num_sweep=n_sweep, num_layer=n_layer,
+                    num_sweep=n_sweep, num_layer=n_layer,
                     gov_param=g_param)
             x = tf.constant(input_val)
             y = flow.operator(x)
@@ -122,24 +120,23 @@ def test_autoregressive_flow():
     assert output_det_jacobian.shape == (n_example,), 'Testing log det jacobian.'
 
     # Make sure the shapes are consistent.
-    num = 4
 
-    input_ = np.random.rand(num, n_example, time, dim)
+    input_ = np.random.rand(n_example, time, dim)
 
     output, output_det_jacobian = run_tf_flow(
-            input_, dim=dim, time=time, num=num)
+            input_, dim=dim, time=time)
 
     print "Multiple auto-regressive flow transformation with given parameters." 
-    assert output.shape == (num, n_example, time, dim), 'Testing output shape.'
-    assert output_det_jacobian.shape == (num, n_example), 'Testing log det jacobian.'
+    assert output.shape == (n_example, time, dim), 'Testing output shape.'
+    assert output_det_jacobian.shape == (n_example,), 'Testing log det jacobian.'
 
-    param = np.random.rand(n_sweep, time - 1, n_layer, num, 2 * 2 * dim + 1)
+    param = np.random.rand(n_sweep, time - 1, n_layer, 1, 2 * 2 * dim + 1)
     output, output_det_jacobian = run_tf_flow(
-            input_, dim=dim, time=time, num=num, gov_param=param)
+            input_, dim=dim, time=time, gov_param=param)
 
     print "Multiple auto-regressive flow transformation." 
-    assert output.shape == (num, n_example, time, dim), 'Testing output shape.'
-    assert output_det_jacobian.shape == (num, n_example), 'Testing log det jacobian.'
+    assert output.shape == (n_example, time, dim), 'Testing output shape.'
+    assert output_det_jacobian.shape == (n_example,), 'Testing log det jacobian.'
 
 
 if __name__ == "__main__":

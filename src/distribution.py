@@ -71,7 +71,8 @@ class BlockTriDiagonalNormal(tf.distributions.Distribution):
                     "inv_cov should be of type BlockTriDiagonalMatrix.")
 
         self.base_dist = tf.distributions.Normal(
-                loc=tf.zeros(loc.shape), scale=tf.ones(loc.shape))
+                loc=tf.zeros(loc.shape, dtype=loc.dtype),
+                scale=tf.ones(loc.shape, dtype=loc.dtype))
         self.loc = loc
         self.inv_cov = inv_cov
         self.chol_factor = inv_cov_chol_factor
@@ -82,12 +83,27 @@ class BlockTriDiagonalNormal(tf.distributions.Distribution):
     def sample(self, n_samples):
         """Samples n_samples times from the mutli-variate normal."""
         samples = self.base_dist.sample(n_samples)
+        # The order of the dimensions is not compatible with
+        # default tf.Distribution if there are multiple distributions.
+        # i.e. if there are M distributions with N samples each the sahpe of
+        # samples is (N, M, ...), whereas, the BlockBiDiagonal.solve() gets
+        # input with shape (M, N, ...). Same applies to output shape.
+        # TODO: Temporarily twice transpose the tensors but this needs a fix
+        # in block_matrix.py.
+        if len(samples.shape) == 4:
+            # multiple distributions
+            samples = tf.transpose(samples, perm=[1, 0, 2, 3])
+            solve_res = self.chol_factor_transpose.solve(samples)
+            solve_res = tf.transpose(solve_res, perm=[1, 0, 2, 3])
+            return self.loc + solve_res
         return self.loc + self.chol_factor_transpose.solve(samples)
 
     def entropy(self):
         """Closed form entropy using det of cholesky factor of inv-cov."""
         tot_dim = self.chol_factor.num_block * self.chol_factor.block_dim
-        const = (tf.log(2. * np.pi) + 1.) * tot_dim / 2.
+        const = tf.constant(
+                (np.log(2. * np.pi) + 1.) * tot_dim / 2.,
+                dtype=self.loc.dtype)
         return - tf.reduce_sum(tf.reduce_sum(
                 tf.log(self.chol_factor.get_diag_part()), axis=-1), axis=-1) + const
 
@@ -111,7 +127,7 @@ class MultiplicativeNormal(BlockTriDiagonalNormal):
         a_matrix: tf.Tensor with shape (..., D, D)
             Linear transformation matrix for the transition function.
         c_matrix: tf.Tensor with shape (..., T, D, D)
-            Block-diagonal matrix.
+            Block-diagonal semi-positive definite matrix.
         m_matrix: tf.Tensor with shape (..., T, D)
         """
         # Dimension of space.

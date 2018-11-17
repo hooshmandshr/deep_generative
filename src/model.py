@@ -10,7 +10,7 @@ used in our AEVB framework.
 import numpy as np
 import tensorflow as tf
 
-from distribution import LogitNormalDiag, MultiPoisson
+from distribution import LogitNormalDiag, MultiPoisson, MultiplicativeNormal
 
 
 FULL_GAUSSIAN = tf.contrib.distributions.MultivariateNormalTriL
@@ -36,7 +36,13 @@ class Model(object):
 
     def sample(self, n_samples, y=None):
         """Samples from the model conditional/or not."""
-        pass
+        if self.in_dim == 0 and y is not None:
+            raise ValueError(
+                    "Model is not conditional and does not take 'y'.")
+
+        if not self.in_dim == 0 and y is None:
+            raise ValueError(
+                    "Model is conditional, 'y' can not be None.")
 
     def log_prob(self, x, y=None):
         """Computes log-prob of samples given the value of the distrib."""
@@ -45,6 +51,10 @@ class Model(object):
     def entropy(self, y=None):
         """Computes the closed form entropy of the model if it exists."""
         pass
+
+    def has_entropy(self):
+        """If the model has explicit analytical entropy."""
+        return False
 
 
 class ReparameterizedDistribution(Model):
@@ -67,6 +77,14 @@ class ReparameterizedDistribution(Model):
             Dimensionality of the input (random) variable y.
         distribution: tensorflow.distributions.Distribution
             Known distribution that is reparameterized by a function f().
+            distributions that are supported:
+            -MultivariateNormalTril
+            -MultivariateNormalDiag
+            -LogitNormalDiag
+            -MultiPoisson
+            -MultiplicativeNormal:
+                in_dim should be (time, dim)
+                out_dim should be (time, Dim)
         transforma: Class that is extension of Transform
             Type of transformation f() to be applied to y in order to get
             the parameters of the know distributions.
@@ -90,8 +108,62 @@ class ReparameterizedDistribution(Model):
         # reparametrized distribution given different inputs.
         self.dist_dict = {}
         self.trans_args = kwargs
-        # Shortened tensorflow graph
+        # already created reparametrization transforms for the model.
+        # The logical order of these transformation should be handled
+        # internally based on the distribution class.
+        self.transforms = []
 
+    def get_transforms(self):
+        """Initializes or gets the transformations necessary for reparam.
+
+        Each distribution type has different scale shape. This propmts this
+        function to set up the correct shape for the scale if it is necessary
+        for the scale to bre reparameterized.
+
+        returns:
+        --------
+        transform.Transform
+        """
+        if len(self.transforms) > 0:
+            return self.transforms
+
+        # Regardless of distribution type, the location has the same
+        # shape as the output.
+        if not self.dist_class is MultiplicativeNormal: 
+            self.transforms.append(self.transform_class(
+                in_dim=self.in_dim, out_dim=self.out_dim,
+                **self.trans_args))
+ 
+        # Multivariate (Logit) normal with diagonal covariance.
+        if self.dist_class is DIAG_GAUSSIAN or\
+                self.dist_class is LogitNormalDiag:
+            # Diagonal Covariance.
+            self.transforms.append(self.transform_class(
+                in_dim=self.in_dim, out_dim=self.out_dim,
+                **self.trans_args))
+        # Multivariate Normal With full covariance.
+        elif self.dist_class is FULL_GAUSSIAN:
+            # Cholesky factor of the covariance matrix.
+            self.transforms.append(self.transform_class(
+                in_dim=self.in_dim, out_dim=self.out_dim * self.out_dim,
+                **self.trans_args))
+        # MultiplicativeNormal for LDS models.
+        elif self.dist_class is MultiplicativeNormal: 
+            in_time, in_dim = self.in_dim
+            time, out_dim = self.out_dim
+            # Parameters of the C matrix.
+            self.transforms.append(self.transform_class(
+                in_dim=in_dim,
+                out_dim=out_dim * out_dim,
+                **self.trans_args))
+            # Parameters of the M matrix.
+            self.transforms.append(self.transform_class(
+                in_dim=in_dim,
+                out_dim=out_dim,
+                **self.trans_args))
+
+        return self.transforms
+  
     def get_distribution(self, y):
         """Get the tf.Distribution given y as an input for p(x|y).
 
@@ -105,24 +177,25 @@ class ReparameterizedDistribution(Model):
         tf.Distribution for p(x|y) if y is None 
         """
         if not y.shape[-1].value == self.in_dim:
-            raise ValueError(
-                    "Input must have dimension {}".format(self.in_dim))
+            if not self.dist_class is MultiplicativeNormal: 
+                raise ValueError(
+                        "Input must have dimension {}".format(self.in_dim))
         if y in self.dist_dict:
             # Necessary tf.Distribution has already been created for y.
             return self.dist_dict[y]
+
+        # Get the necessary transformations for scale and location of the
+        # distribution
+        transforms = self.get_transforms()
         # Multivariate (Logit) normal with diagonal covariance.
         if self.dist_class is DIAG_GAUSSIAN or\
                 self.dist_class is LogitNormalDiag:
             # Rectify standard deviation so that it is a smooth
             # positive function
-            loc_ = self.transform_class(
-                    in_dim=self.in_dim, out_dim=self.out_dim,
-                    **self.trans_args).operator(y)
+            loc_ = transforms[0].operator(y)
             scale_ = self.reparam_scale
             if self.reparam_scale is True:
-                scale_ = tf.nn.softmax(self.transform_class(
-                    in_dim=self.in_dim, out_dim=self.out_dim,
-                    **self.trans_args).operator(y))
+                scale_ = tf.nn.softplus(transforms[1].operator(y))
             else:
                 if self.reparam_scale is False:
                     if self.scale_param is None:
@@ -145,22 +218,15 @@ class ReparameterizedDistribution(Model):
 
         # Multivariate Poisson (independent variables).
         elif self.dist_class is MultiPoisson:
-            rate_ = tf.nn.softmax(self.transform_class(
-                    in_dim=self.in_dim, out_dim=self.out_dim,
-                    **self.trans_args).operator(y))
+            rate_ = tf.nn.softplus(transforms[0].operator(y))
             dist = self.dist_class(rate_)
 
         # Multivariate Normal With full covariance.
         elif self.dist_class is FULL_GAUSSIAN:
-            loc_ = self.transform_class(
-                    in_dim=self.in_dim, out_dim=self.out_dim,
-                    **self.trans_args).operator(y)
+            loc_ = transforms[0].operator(y)
             cov_ = self.reparam_scale
             if self.reparam_scale is True:
-                cov_ = self.transform_class(
-                        in_dim=self.in_dim,
-                        out_dim=self.out_dim * self.out_dim,
-                        **self.trans_args).operator(y)
+                cov_ = transforms[1].operator(y)
                 cov_ = tf.reshape(cov_, [-1, self.out_dim, self.out_dim])
             else:
                 if self.reparam_scale is False:
@@ -182,6 +248,43 @@ class ReparameterizedDistribution(Model):
                 cov_ = tf.reshape(cov_, cov_shape)
 
             dist = self.dist_class(loc=loc_, scale_tril=cov_)
+
+        # MultiplicativeNormal for LDS models.
+        elif self.dist_class is MultiplicativeNormal:
+            in_time, in_dim = self.in_dim
+            time, out_dim = self.out_dim
+            if not in_time == time:
+                raise ValueError("in_dim and out_dim mistmatch.")
+            # How many examples/distributions in parallel.
+            dtype = y.dtype
+            n_ex = y.shape[0].value
+            # Free parameters for covariances and transition matrix.
+            def get_cholesky_factor_variable():
+                shape = [n_ex, out_dim, out_dim]
+                if n_ex == 0:
+                    shape = [out_dim, out_dim]
+                # Get a lower triangular variable
+                var = tf.linalg.band_part(tf.Variable(
+                        np.random.normal(0, 1, shape),
+                        dtype=dtype), -1, 0)
+                return tf.matmul(var, var, transpose_b=True)
+            # Shape of each parameter.
+            a_shape = [n_ex, out_dim, out_dim]
+            if n_ex == 0:
+                a_shape = a_shape[1:]
+            a_matrix = tf.Variable(np.random.normal(0, 1, a_shape), dtype=dtype)
+            # c_matrix should be semi-positive definite
+            c_matrix = tf.linalg.band_part(tf.reshape(transforms[0].operator(y),
+                [-1, time, out_dim, out_dim]), -1, 0)
+            c_matrix = tf.matmul(c_matrix, c_matrix, transpose_b=True)
+            m_matrix = transforms[1].operator(y)
+
+            dist = MultiplicativeNormal(
+                    q_init=get_cholesky_factor_variable(),
+                    q_matrix=get_cholesky_factor_variable(),
+                    a_matrix=a_matrix,
+                    c_matrix=c_matrix,
+                    m_matrix=m_matrix)
 
         # Store the created distribution for tensor y in the dictionary.
         self.dist_dict[y] = dist
@@ -224,4 +327,12 @@ class ReparameterizedDistribution(Model):
         """
         dist = self.get_distribution(y)
         return dist.entropy()
+
+    def has_entropy(self):
+        """Based on type of base distribution the model can have entropy."""
+        if self.dist_class is FULL_GAUSSIAN or\
+                self.dist_class is DIAG_GAUSSIAN or\
+                self.dist_class is MultiplicativeNormal:
+            return True
+        return False
 

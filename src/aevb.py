@@ -4,7 +4,9 @@ import numpy as np
 import tensorflow as tf
 from tqdm import tqdm
 
+from dynamics import FLDS
 from model import Model
+from norm_flow_model import NormalizingFlowModel
 
 
 class AutoEncodingVariationalBayes(object):
@@ -16,6 +18,8 @@ class AutoEncodingVariationalBayes(object):
         params:
         -------
         data: numpy.ndarray
+            Shape of input is assumed to be (N, ...) where first dimensions
+            corresponds to each example and the rest is the shape of each input
         prior: tf.distributions.Distribution
             If None, the generative model is interpreted as full-joint
             distribution over observations and latent codes.
@@ -37,13 +41,14 @@ class AutoEncodingVariationalBayes(object):
         self.batch_size = batch_size
         # Data properties.
         self.data_size = data.shape[0]
-        self.data_dim = data.shape[-1]
+        # Shape of each example
+        self.data_dim = data.shape[1:]
         self.opt = optimizer
         if self.opt is None:
             self.opt = tf.train.AdamOptimizer(learning_rate=0.001)
         # Setting up tensorflow Tensors for input and ELBO
         self.batch = tf.placeholder(
-                shape=[self.batch_size, self.data_dim],
+                shape=(self.batch_size,) + self.data_dim,
                 dtype=tf.float64, name="input")
         # Set up ELBO computation graph.
         self.elbo = None
@@ -60,21 +65,38 @@ class AutoEncodingVariationalBayes(object):
         # Get monte-carlo samples
         mc_samples = self.rec_model.sample(
                 n_samples=self.sample_size, y=self.batch)
+        if isinstance(self.rec_model, NormalizingFlowModel):
+            # Sampling method for norm flow models returns both samples
+            # and thir log-probabilities.
+            mc_samples, mc_samples_log_prob = mc_samples
 
         likelihood = self.gen_model.log_prob(x=self.batch, y=mc_samples)
         if self.prior is not None:
             likelihood += self.prior.log_prob(mc_samples)
         expected_likelihood = tf.reduce_mean(likelihood, axis=0)
-        entropy = self.rec_model.entropy(y=self.batch)
-        self.elbo = tf.reduce_sum(expected_likelihood + entropy)
+
+        # Computing the entropy of the recognition model based on type. 
+        if self.rec_model.has_entropy():
+            entropy = self.rec_model.entropy(y=self.batch)
+        else:
+            # We have to compute MC estimate of the entropy term.
+            if not isinstance(self.rec_model, NormalizingFlowModel):
+                # We have to compute the log-prob of each sample under the
+                # recognition model.
+                mc_samples_log_prob = self.rec_model.log_prob(
+                        x=mc_samples, y=self.batch)
+
+            entropy = tf.reduce_mean(mc_samples_log_prob, axis=-1)
+
+        self.elbo = tf.reduce_mean(expected_likelihood + entropy)
         # Reconstruction of data
-        self.recon = tf.reduce_mean(
-            self.gen_model.sample(n_samples=self.sample_size, y=mc_samples),
-            axis=0)
+        self.codes = mc_samples
+        self.recon = self.gen_model.sample(n_samples=self.sample_size, y=mc_samples)
 
         return self.elbo
 
     def make_session(self):
+        """Sets up a new session if none has been initiated."""
         if self.sess is None:
             self.sess = tf.Session()
             self.sess.run(tf.global_variables_initializer())
@@ -86,6 +108,7 @@ class AutoEncodingVariationalBayes(object):
         pass
 
     def close_session(self):
+        """Closes the existing session."""
         if self.sess is not None:
             self.sess.close()
 
@@ -93,7 +116,22 @@ class AutoEncodingVariationalBayes(object):
         pass
 
     def train(self, steps, fetch_losses=True):
+        """Trains the models for a fixed step size.
 
+        Note: this trainer does not shuffle input data and iterates based on
+        the order it receives the data.
+
+        params:
+        -------
+        steps: int
+            Number of iterations in the training.
+        fetch_losses: bool
+            Whether to retrieve losses for each iteration of the training.
+
+        returns:
+        --------
+        list of losses per each iteration or emtpy list.
+        """
         self.make_session()
         losses = []
         for i in tqdm(range(steps)):
@@ -109,7 +147,21 @@ class AutoEncodingVariationalBayes(object):
                         feed_dict={"input:0": self.data[idx:idx + self.batch_size]})
         return losses
 
+    def get_codes(self, idxs):
+        """Get samples from the recognition model for particular examples."""
+        recs = []
+        for i in idxs:
+            input_ = np.concatenate(
+                    [self.data[i:i+1] for j in range(self.batch_size)],
+                    axis=0)
+            rec = self.sess.run(
+                    self.codes,
+                    feed_dict={"input:0": input_})
+            recs.append(rec[:, 0])
+        return recs
+
     def get_reconstructions(self, idxs):
+        """Get reconstructions for particular examples of the dataset."""
         recs = []
         for i in idxs:
             input_ = np.concatenate(
@@ -120,3 +172,4 @@ class AutoEncodingVariationalBayes(object):
                     feed_dict={"input:0": input_})
             recs.append(rec[:, 0])
         return recs
+

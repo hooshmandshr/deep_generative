@@ -26,7 +26,8 @@ class Transform(object):
         self.in_dim = in_dim
         self.out_dim = out_dim
         self.initial_value = initial_value
-        if gov_param is not None and not isinstance(gov_param, tf.Tensor):
+        if gov_param is not None and not isinstance(gov_param, tf.Tensor) and\
+                not isinstance(gov_param, tf.Variable):
             raise ValueError(
                     'Governing parameters of transformation should be Tensor.')
         self.var = gov_param
@@ -62,7 +63,7 @@ class Transform(object):
         """Checks whether the input has valid shape."""
         if not x.shape[-1] == self.in_dim:
             raise ValueError(
-                    "Input must have dimension {}.".fromat(self.in_dim))
+                    "Input must have dimension {}.".format(self.in_dim))
 
     def broadcast_operator(self, x):
         """Input of higher dimensions the operation will give same shape."""
@@ -209,7 +210,7 @@ class MultiLayerPerceptron(Transform):
                 activation = self.out_activation
             layer_t = LinearTransform(
                     in_dim=in_dim, out_dim=n_units,
-                    non_linearity=self.activation)
+                    non_linearity=activation)
             self.layers.append(layer_t)
             in_dim = n_units
 

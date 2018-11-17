@@ -58,10 +58,11 @@ class BlockDiagonalMatrix(object):
         """
         if self.diag_part is not None:
             return self.diag_part
+        offset_to = [-1 for e in self.matrix_offset_from]
         def get_diag_element(i):
             return tf.slice(self.diag_block,
                     self.matrix_offset_from + [0, i, i],
-                    self.matrix_offset_from + [-1, 1, 1])
+                    offset_to + [-1, 1, 1])
         self.diag_part = tf.squeeze(tf.concat(
                 [get_diag_element(i) for i in range(self.block_dim)], axis=-1))
         return self.diag_part

@@ -20,6 +20,7 @@ def test_reparam_gaussian_full_covar():
     dist = tf.contrib.distributions.MultivariateNormalTriL
 
     with tf.Graph().as_default():
+        input_tensor = tf.constant(input_)
         d_1 = ReparameterizedDistribution(
                 out_dim=out_dim, in_dim=in_dim,
                 distribution=dist, transform=LinearTransform,
@@ -31,8 +32,7 @@ def test_reparam_gaussian_full_covar():
         d_3 = ReparameterizedDistribution(
                 out_dim=out_dim, in_dim=in_dim,
                 distribution=dist, transform=LinearTransform,
-                reparam_scale=tf.constant(np.eye(2)))
-        input_tensor = tf.constant(input_)
+                reparam_scale=tf.eye(out_dim, dtype=input_tensor.dtype))
         s_1 = d_1.sample(n_samples=n_sample, y=input_tensor)
         s_2 = d_2.sample(n_samples=n_sample, y=input_tensor)
         s_3 = d_3.sample(n_samples=n_sample, y=input_tensor)
