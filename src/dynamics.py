@@ -7,6 +7,7 @@ to easily sample from, compute density, etc.
 import numpy as np
 import tensorflow as tf
 
+from distribution import MultiPoisson
 from model import Model, ReparameterizedDistribution
 from transform import LinearTransform
 
@@ -264,10 +265,11 @@ class KalmanFilter(LatentLinearDynamicalSystem):
 
 
 class FLDS(LatentLinearDynamicalSystem):
-    """Class for implementation of Kalman-Filter generative model."""
+    """Class for implementation of fLDS/pfLDS generative model."""
 
     def __init__(self, lat_dim, obs_dim, time_steps, nonlinear_transform,
-            init_transition_matrix_bias=None, full_covariance=True, **kwargs):
+            init_transition_matrix_bias=None, poisson=False,
+            full_covariance=True, **kwargs):
         """Sets up the parameters of the Kalman filter sets up super class.
 
         params:
@@ -278,10 +280,15 @@ class FLDS(LatentLinearDynamicalSystem):
         nonlinear_transform: transform.Transform type
         init_transition_matrix_bias: np.ndarray shape (lat_dim + 1, lat_dim)
             Initial value for the transition matrix.
+        poisson: bool
+            If False the imission distribution is Gaussian, if not the emission
+            distribution is poisson.
         full_covariance: bool
             Covariance matrices are full if True, otherwise, diagonal.
         """
         mean_0 = np.random.normal(0, 1, lat_dim)
+        if poisson:
+            dist = MultiPoisson
         if full_covariance:
             dist = tf.contrib.distributions.MultivariateNormalTriL
         else:

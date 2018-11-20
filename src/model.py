@@ -129,26 +129,7 @@ class ReparameterizedDistribution(Model):
 
         # Regardless of distribution type, the location has the same
         # shape as the output.
-        if not self.dist_class is MultiplicativeNormal: 
-            self.transforms.append(self.transform_class(
-                in_dim=self.in_dim, out_dim=self.out_dim,
-                **self.trans_args))
- 
-        # Multivariate (Logit) normal with diagonal covariance.
-        if self.dist_class is DIAG_GAUSSIAN or\
-                self.dist_class is LogitNormalDiag:
-            # Diagonal Covariance.
-            self.transforms.append(self.transform_class(
-                in_dim=self.in_dim, out_dim=self.out_dim,
-                **self.trans_args))
-        # Multivariate Normal With full covariance.
-        elif self.dist_class is FULL_GAUSSIAN:
-            # Cholesky factor of the covariance matrix.
-            self.transforms.append(self.transform_class(
-                in_dim=self.in_dim, out_dim=self.out_dim * self.out_dim,
-                **self.trans_args))
-        # MultiplicativeNormal for LDS models.
-        elif self.dist_class is MultiplicativeNormal: 
+        if self.dist_class is MultiplicativeNormal: 
             in_time, in_dim = self.in_dim
             time, out_dim = self.out_dim
             # Parameters of the C matrix.
@@ -161,6 +142,39 @@ class ReparameterizedDistribution(Model):
                 in_dim=in_dim,
                 out_dim=out_dim,
                 **self.trans_args))
+        else: 
+            self.transforms.append(self.transform_class(
+                in_dim=self.in_dim, out_dim=self.out_dim,
+                **self.trans_args))
+
+        # Reparameteriz scale if needed.
+        if self.reparam_scale:
+            if self.dist_class is DIAG_GAUSSIAN or\
+                    self.dist_class is LogitNormalDiag:
+                # Diagonal Covariance.
+                self.transforms.append(self.transform_class(
+                    in_dim=self.in_dim, out_dim=self.out_dim,
+                    **self.trans_args))
+            # Multivariate Normal With full covariance.
+            elif self.dist_class is FULL_GAUSSIAN:
+                # Cholesky factor of the covariance matrix.
+                self.transforms.append(self.transform_class(
+                    in_dim=self.in_dim, out_dim=self.out_dim * self.out_dim,
+                    **self.trans_args))
+            # MultiplicativeNormal for LDS models.
+            elif self.dist_class is MultiplicativeNormal: 
+                in_time, in_dim = self.in_dim
+                time, out_dim = self.out_dim
+                # Parameters of the C matrix.
+                self.transforms.append(self.transform_class(
+                    in_dim=in_dim,
+                    out_dim=out_dim * out_dim,
+                    **self.trans_args))
+                # Parameters of the M matrix.
+                self.transforms.append(self.transform_class(
+                    in_dim=in_dim,
+                    out_dim=out_dim,
+                    **self.trans_args))
 
         return self.transforms
   

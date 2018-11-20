@@ -4,9 +4,11 @@ import numpy as np
 import tensorflow as tf
 from tqdm import tqdm
 
+from distribution import MultiplicativeNormal
 from dynamics import FLDS
-from model import Model
+from model import Model, ReparameterizedDistribution
 from norm_flow_model import NormalizingFlowModel
+from transform import MultiLayerPerceptron as MLP
 
 
 class AutoEncodingVariationalBayes(object):
@@ -73,7 +75,7 @@ class AutoEncodingVariationalBayes(object):
         likelihood = self.gen_model.log_prob(x=self.batch, y=mc_samples)
         if self.prior is not None:
             likelihood += self.prior.log_prob(mc_samples)
-        expected_likelihood = tf.reduce_mean(likelihood, axis=0)
+        self.expected_likelihood = tf.reduce_mean(likelihood, axis=0)
 
         # Computing the entropy of the recognition model based on type. 
         if self.rec_model.has_entropy():
@@ -86,9 +88,10 @@ class AutoEncodingVariationalBayes(object):
                 mc_samples_log_prob = self.rec_model.log_prob(
                         x=mc_samples, y=self.batch)
 
-            entropy = tf.reduce_mean(mc_samples_log_prob, axis=-1)
+            entropy = -tf.reduce_mean(mc_samples_log_prob, axis=-1)
+        self.entropy = entropy
 
-        self.elbo = tf.reduce_mean(expected_likelihood + entropy)
+        self.elbo = tf.reduce_mean(self.expected_likelihood + self.entropy)
         # Reconstruction of data
         self.codes = mc_samples
         self.recon = self.gen_model.sample(n_samples=self.sample_size, y=mc_samples)
@@ -172,4 +175,57 @@ class AutoEncodingVariationalBayes(object):
                     feed_dict={"input:0": input_})
             recs.append(rec[:, 0])
         return recs
+
+
+class FLDSVB(AutoEncodingVariationalBayes):
+    """Class for FLDS learning model."""
+
+    def __init__(self, data, lat_dim, nonlinear_transform, poisson=False,
+            optimizer=None, n_monte_carlo_samples=1, batch_size=1,
+            full_covariance=True, **kwargs):
+        """
+        params:
+        -------
+        data: numpy.ndarray
+            Shape of input is assumed to be (N, ...) where first dimensions
+            corresponds to each example and the rest is the shape of each input
+        nonlinear_transform: tf.Transform type
+            Nonlinear transformation from latent space to parameters of the
+            observation model.
+        poisson: bool
+            If False, the model is Gaussian. Otherwise, the emission model is
+            Poisson.
+        optimizer: tf.train.Optimizer
+            If None, by default AdamOptimizer with learning rate 0.001 will be
+            used.
+        n_monte_carlo_smaples: int
+            Number of monte-carlo examples to be used for estimation of ELBO.
+        batch_size: int
+            Batch size for stochastic estimation of ELBO.
+        **kwargs:
+            Arguments for neural network function corresponding to the
+            generative function.
+        """
+        self.lat_dim = lat_dim
+        _, self.time, self.obs_dim = data.shape
+        self.poisson = poisson
+        gen_model = FLDS(
+                lat_dim=lat_dim, obs_dim=self.obs_dim, time_steps=self.time,
+                init_transition_matrix_bias=np.append(
+                    np.eye(self.lat_dim), np.zeros([1, self.lat_dim]), axis=0),
+                full_covariance=full_covariance,
+                poisson=self.poisson,
+                nonlinear_transform=nonlinear_transform, **kwargs)
+
+        recon_model = ReparameterizedDistribution(
+                in_dim=(self.time, self.obs_dim),
+                out_dim=(self.time, self.lat_dim),
+                distribution=MultiplicativeNormal,
+                transform=MLP, hidden_units=[self.obs_dim * 2, self.obs_dim])
+
+        super(FLDSVB, self).__init__(
+                data=data, generative_model=gen_model,
+                recognition_model=recon_model,
+                n_monte_carlo_samples=n_monte_carlo_samples,
+                batch_size=batch_size, optimizer=optimizer)
 
