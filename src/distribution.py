@@ -47,6 +47,16 @@ class MultiPoisson(tf.contrib.distributions.Poisson):
         return tf.reduce_sum(log_prob, axis=-1)
 
 
+class MultiBernoulli(tf.contrib.distributions.Bernoulli):
+    """Class that extends poisson to independent multivarate Bernoulli."""
+
+    def log_prob(self, value, name='log_prob'):
+        """Sum of log-prob of independent logit-normal in the last axis."""
+        log_prob = super(MultiBernoulli, self).log_prob(
+                value=value, name=name)
+        return tf.reduce_sum(log_prob, axis=-1)
+
+
 class BlockTriDiagonalNormal(tf.distributions.Distribution):
     """Class for a multi-variate normal with block-tri-diagonal covariance."""
 

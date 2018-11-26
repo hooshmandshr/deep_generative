@@ -55,7 +55,9 @@ class AutoEncodingVariationalBayes(object):
         # Set up ELBO computation graph.
         self.elbo = None
         self.get_elbo()
-        self.train_op = self.opt.minimize(-self.elbo)
+        regularizer = self.gen_model.get_regularizer()
+        regularizer += self.rec_model.get_regularizer()
+        self.train_op = self.opt.minimize(-self.elbo + 0.01 * regularizer)
         # Indicate that there is no open session.
         self.sess = None
 
@@ -138,7 +140,7 @@ class AutoEncodingVariationalBayes(object):
         self.make_session()
         losses = []
         for i in tqdm(range(steps)):
-            idx = i % (self.data_size - self.batch_size)
+            idx = (i * self.batch_size) % (self.data_size - self.batch_size)
             if fetch_losses:
                 iteration_elbo, _ = self.sess.run(
                         [self.elbo, self.train_op],
@@ -150,31 +152,69 @@ class AutoEncodingVariationalBayes(object):
                         feed_dict={"input:0": self.data[idx:idx + self.batch_size]})
         return losses
 
-    def get_codes(self, idxs):
-        """Get samples from the recognition model for particular examples."""
-        recs = []
-        for i in idxs:
+    def check_examples_shape(self, examples):
+        """Checks whether input matches the shape of the data."""
+        assert isinstance(examples, np.ndarray)
+        input_dim = examples.shape[1:]
+        if not input_dim == self.data_dim:
+            msg = "Input shape {} does not match training data shape {}."
+            raise ValueError(msg.format(input_dim, self.data_dim))
+
+    def get_codes(self, examples):
+        """Get samples from the recognition model for particular examples.
+
+        Both examples and idxs must not be None and examples has precedence
+        over idxs.
+
+        params:
+        -------
+        examples: numpy.ndarray
+            Same shape as the data with the exception of size
+            (i.e. first dimension).
+        returns:
+        numpy.ndarray of codes corresponding to the examples.
+        """
+        self.check_examples_shape(examples)
+        input_size = examples.shape[0]
+        codes = []
+        for i in tqdm(range(input_size)):
             input_ = np.concatenate(
-                    [self.data[i:i+1] for j in range(self.batch_size)],
+                    [examples[i:i+1] for j in range(self.batch_size)],
                     axis=0)
             rec = self.sess.run(
                     self.codes,
                     feed_dict={"input:0": input_})
-            recs.append(rec[:, 0])
-        return recs
+            codes.append(rec[:, 0])
+        return np.array(codes)
 
-    def get_reconstructions(self, idxs):
-        """Get reconstructions for particular examples of the dataset."""
+    def get_reconstructions(self, examples):
+        """Get reconstructions for particular examples of the dataset.
+
+        Both examples and idxs must not be None and examples has precedence
+        over idxs.
+
+        params:
+        -------
+        examples: numpy.ndarray
+            Same shape as the data with the exception of size
+            (i.e. first dimension).
+
+        returns:
+        numpy.ndarray of codes corresponding to the examples.
+ 
+        """
+        self.check_examples_shape(examples)
+        input_size = examples.shape[0]
         recs = []
-        for i in idxs:
+        for i in tqdm(range(input_size)):
             input_ = np.concatenate(
-                    [self.data[i:i+1] for j in range(self.batch_size)],
+                    [examples[i:i+1] for j in range(self.batch_size)],
                     axis=0)
             rec = self.sess.run(
                     self.recon,
                     feed_dict={"input:0": input_})
             recs.append(rec[:, 0])
-        return recs
+        return np.array(recs)
 
 
 class FLDSVB(AutoEncodingVariationalBayes):

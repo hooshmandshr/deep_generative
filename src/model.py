@@ -10,11 +10,13 @@ used in our AEVB framework.
 import numpy as np
 import tensorflow as tf
 
-from distribution import LogitNormalDiag, MultiPoisson, MultiplicativeNormal
+from distribution import LogitNormalDiag, MultiPoisson, MultiplicativeNormal,\
+        MultiBernoulli
 
 
 FULL_GAUSSIAN = tf.contrib.distributions.MultivariateNormalTriL
 DIAG_GAUSSIAN = tf.contrib.distributions.MultivariateNormalDiag
+
 
 
 class Model(object):
@@ -56,6 +58,9 @@ class Model(object):
         """If the model has explicit analytical entropy."""
         return False
 
+    def get_regularizer(self):
+        """Returns a regularization for the model if it exists."""
+        return 0.
 
 class ReparameterizedDistribution(Model):
     """Class that Implements reparameterized distributions p(x|y).
@@ -235,6 +240,11 @@ class ReparameterizedDistribution(Model):
             rate_ = tf.nn.softplus(transforms[0].operator(y))
             dist = self.dist_class(rate_)
 
+        # Multivariate Bernoulli (independent variables).
+        elif self.dist_class is MultiBernoulli:
+            probs_ = tf.nn.sigmoid(transforms[0].operator(y))
+            dist = self.dist_class(probs_)
+
         # Multivariate Normal With full covariance.
         elif self.dist_class is FULL_GAUSSIAN:
             loc_ = transforms[0].operator(y)
@@ -349,4 +359,11 @@ class ReparameterizedDistribution(Model):
                 self.dist_class is MultiplicativeNormal:
             return True
         return False
+
+    def get_regularizer(self, **kwargs):
+        """Gets the regularizations for the transformations in the model."""
+        reg = 0.
+        for transform in self.get_transforms():
+            reg += transform.get_regularizer(**kwargs)
+        return reg
 
