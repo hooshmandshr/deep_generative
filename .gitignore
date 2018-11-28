@@ -1,2 +1,5 @@
+# python builds
 *.pyc
+# temporary files
 *~
+# src/*.ipynb
