@@ -38,7 +38,7 @@ class LogitNormalDiag(LogitNormal):
 
 
 class MultiPoisson(tf.contrib.distributions.Poisson):
-    """Class that extends poisson to independent multivarate Poissons."""
+    """Class that extends Poisson to independent multivarate Poissons."""
 
     def log_prob(self, value, name='log_prob'):
         """Sum of log-prob of independent logit-normal in the last axis."""
@@ -48,13 +48,29 @@ class MultiPoisson(tf.contrib.distributions.Poisson):
 
 
 class MultiBernoulli(tf.contrib.distributions.Bernoulli):
-    """Class that extends poisson to independent multivarate Bernoulli."""
+    """Class that extends Bernoulli to independent multivarate Bernoulli."""
 
     def log_prob(self, value, name='log_prob'):
         """Sum of log-prob of independent logit-normal in the last axis."""
         log_prob = super(MultiBernoulli, self).log_prob(
                 value=value, name=name)
         return tf.reduce_sum(log_prob, axis=-1)
+
+
+class StateSpaceNormalDiag(tf.distributions.Normal):
+    """Diagonal Gaussian distribution for state space models."""
+
+    def __init__(self, loc, scale):
+        if len(loc.shape) < 2:
+            raise ValueError(
+                    "location ans scale should have shape (..., time, dim).")
+        super(StateSpaceNormalDiag, self).__init__(loc=loc, scale=scale)
+
+    def log_prob(self, value, name='log_prob'):
+        """Sum of log-prob of independent logit-normal in the last axis."""
+        log_prob = super(StateSpaceNormalDiag, self).log_prob(
+                value=value, name=name)
+        return tf.reduce_sum(tf.reduce_sum(log_prob, axis=-1), axis=-1)
 
 
 class BlockTriDiagonalNormal(tf.distributions.Distribution):

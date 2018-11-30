@@ -238,13 +238,13 @@ class MultiLayerPlanarFlow(NormalizingFlow):
         """
         num_layer, dim = kwargs["num_layer"], kwargs["dim"]
 
-        return (num_layer, 1, 2 * dim + 1) 
+        return (num_layer, 1, 2 * dim + 1)
 
 
 class TimeAutoRegressivePlanarFlow(NormalizingFlow):
     """Class that implements PlanarFlow auto-regressive transform."""
 
-    def __init__(self, dim, time, num_sweep=1, num_layer=1,
+    def __init__(self, dim, num_sweep=1, num_layer=1,
             non_linearity=tf.tanh, gov_param=None, initial_value=None,
             name=None):
         """Sets up the universal properties of any transformation function.
@@ -253,13 +253,11 @@ class TimeAutoRegressivePlanarFlow(NormalizingFlow):
 
         params:
         -------
-        dim: int
-            dimensionality of the input code/variable and output variable.
-        time: int
-            Number of time steps in the process that produces a single
-            trajectory/path of the random variable.
-        num: int
-            Number of total different normalizing flows to be applied at once.
+        dim: tuple of int
+            First, dimensionality of the input code/variable and output
+            variable. The second member is the number of time steps in the
+            process that produces a single trajectory/path of the random
+            variable.
         num_sweep: int
             Number of total sweeps of the entire time components to be done.
         num_layer: int
@@ -275,12 +273,12 @@ class TimeAutoRegressivePlanarFlow(NormalizingFlow):
                 name=name)
         # Set the rest of the attributes.
         self.non_linearity = non_linearity
-        self.time = time
+        self.time, self.space_dim = self.dim
         self.num_layer = num_layer
         self.num_sweep = num_sweep
         # Make sure the shape of the parameters is correct.
-        self.param_shape = (self.num_sweep, self.time - 1, self.num_layer,
-                1, 2 * 2 * self.dim + 1)
+        self.param_shape = self.get_param_shape(
+                dim=dim, num_layer=num_layer, num_sweep=num_sweep)
         self.check_param_shape()
         # Storing all the individual flows in this structure.
         self.set_up_sweep_layer_flows()
@@ -304,10 +302,32 @@ class TimeAutoRegressivePlanarFlow(NormalizingFlow):
                     if self.initial_value is not None:
                         init_value = self.initial_value[sweep, time, layer, :, :]
                     flow = PlanarFlow(
-                            dim=self.dim * 2,
+                            dim=self.space_dim * 2,
                             non_linearity=self.non_linearity,
                             gov_param=gov_param, initial_value=init_value)
                     self.sweep_time_layer_flow[-1][-1].append(flow)
+
+    @staticmethod
+    def get_param_shape(**kwargs):
+        """Gets the shape of the governing parameters of the transform.
+
+        Parameters:
+        -----------
+        **kwargs:
+            Paramters of the constructor that must include the following:
+                dim,
+                num_layer
+        """
+        time, dim = kwargs["dim"]
+        # Set with default values in case not given
+        num_sweep = 1
+        num_layer = 1
+        if "num_sweep" in kwargs:
+            num_sweep = kwargs["num_sweep"]
+        if "num_layer" in kwargs:
+            num_layer = kwargs["num_layer"]
+ 
+        return (num_sweep, time - 1, num_layer, 1, 2 * 2 * dim + 1)
 
     def check_input_shape(self, x):
         """Checks that the input shape is compatible with the flow.
@@ -320,10 +340,9 @@ class TimeAutoRegressivePlanarFlow(NormalizingFlow):
         # Shape of the input tensor.
         s = x.shape
         # Last two dimensions of the expected shape.
-        l_dim = (self.time, self.dim)
 
-        if not (len(s) == 3 and s[1:] == l_dim):
-            raise ValueError("Input shape must be (?, time, dim).")
+        if not (len(s) == 3 and s[1:] == self.dim):
+            raise ValueError("Input shape must be (?, time, space dim).")
 
     def time_slice(self, x):
         """Get time slice of input for a particular time.
@@ -376,8 +395,8 @@ class TimeAutoRegressivePlanarFlow(NormalizingFlow):
                     time_subset = flow.operator(time_subset)
                     log_det_jac += flow.log_det_jacobian(time_subset )
 
-                time_slice[time] = time_subset[:, :self.dim]
-                time_slice[time + 1] = time_subset[:, self.dim:]
+                time_slice[time] = time_subset[:, :self.space_dim]
+                time_slice[time + 1] = time_subset[:, self.space_dim:]
         # Stitch the time slices back together into a single tensor.
         self.log_det_jac_map[x] = log_det_jac
         return self.stitch_time_slice(time_slice)

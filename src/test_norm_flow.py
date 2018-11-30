@@ -87,19 +87,20 @@ def test_planar_flow():
 def test_autoregressive_flow():
     """Tester function for time auto-regressive planar flow on tensor."""
     # Make sure the shapes are consistent.
-    dim = 3
+    # (time, space_dim)
+    time, space_dim = 4, 3
+    dim = (time, space_dim)
     n_example = 1000
-    time = 4
 
     n_sweep = 2
     n_layer = 3
 
-    def run_tf_flow(input_val, dim, time, gov_param=None):
+    def run_tf_flow(input_val, dim, gov_param=None):
         with tf.Graph().as_default():
             g_param = None
             if gov_param is not None:
                 g_param = tf.constant(gov_param)
-            flow = TimeAutoRegressivePlanarFlow(dim=dim, time=time,
+            flow = TimeAutoRegressivePlanarFlow(dim=dim,
                     num_sweep=n_sweep, num_layer=n_layer,
                     gov_param=g_param)
             x = tf.constant(input_val)
@@ -111,31 +112,32 @@ def test_autoregressive_flow():
                 output_det_jacobian = sess.run(z)
         return output, output_det_jacobian
 
-    input_ = np.random.rand(n_example, time, dim)
+    input_ = np.random.rand(n_example, time, space_dim)
 
-    output, output_det_jacobian = run_tf_flow(input_, dim=dim, time=time)
+    output, output_det_jacobian = run_tf_flow(input_, dim=dim)
 
     print "Single auto-regressive flow transformation."
-    assert output.shape == (n_example, time, dim), 'Testing output shape.'
+    assert output.shape == (n_example, time, space_dim), 'Testing output shape.'
     assert output_det_jacobian.shape == (n_example,), 'Testing log det jacobian.'
 
     # Make sure the shapes are consistent.
 
-    input_ = np.random.rand(n_example, time, dim)
+    input_ = np.random.rand(n_example, time, space_dim)
 
     output, output_det_jacobian = run_tf_flow(
-            input_, dim=dim, time=time)
+            input_, dim=dim)
 
     print "Multiple auto-regressive flow transformation with given parameters." 
-    assert output.shape == (n_example, time, dim), 'Testing output shape.'
+    assert output.shape == (n_example, time, space_dim), 'Testing output shape.'
     assert output_det_jacobian.shape == (n_example,), 'Testing log det jacobian.'
 
-    param = np.random.rand(n_sweep, time - 1, n_layer, 1, 2 * 2 * dim + 1)
+    param = np.random.rand(
+            n_sweep, time - 1, n_layer, 1, 2 * 2 * space_dim + 1)
     output, output_det_jacobian = run_tf_flow(
-            input_, dim=dim, time=time, gov_param=param)
+            input_, dim=dim, gov_param=param)
 
     print "Multiple auto-regressive flow transformation." 
-    assert output.shape == (n_example, time, dim), 'Testing output shape.'
+    assert output.shape == (n_example, time, space_dim), 'Testing output shape.'
     assert output_det_jacobian.shape == (n_example,), 'Testing log det jacobian.'
 
 

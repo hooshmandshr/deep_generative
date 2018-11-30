@@ -9,8 +9,8 @@ import numpy as np
 import tensorflow as tf
 
 from model import Model
-from norm_flow import NormalizingFlow
-from transform import Transform
+from norm_flow import NormalizingFlow, TimeAutoRegressivePlanarFlow
+from transform import Transform, MultiLayerPerceptron
 
 
 class NormalizingFlowModel(Model):
@@ -41,7 +41,8 @@ class NormalizingFlowModel(Model):
         transform_type: class that inherits from transform.Transform 
             This allows for conditioning the model on a secondary variable by
             letting a transformation of a secondary variable to govern the
-            parameters of the normalizing flow.
+            parameters of the normalizing flow. If None, the normalizing flow
+            model is unconditional.
         transform_params: dict
             Parameters to tbe passed to the constructor of Transform.
         """
@@ -59,9 +60,18 @@ class NormalizingFlowModel(Model):
                         "in_dim {} and base_model.in_dim {} don't match".format(
                             in_dim, base_model.in_dim))
             out_dim = base_model.out_dim
+        elif isinstance(base_model, tf.distributions.Distribution):
+            # Base model is a tensorflow.Distribution sub-class
+            sample_shape = tf.squeeze(base_model.sample(1)).shape
+            if len(sample_shape) < 2:
+                out_dim = sample_shape[0].value
+            else:
+                out_dim = tuple(sample_shape.as_list())
         else:
-            # just have tensorflow distribution.
-            out_dim = base_model.sample().shape[0].value
+            # Input is not valid
+            msg = "'base_model' must be model.Model or\
+                    tf.distributions.Distribution."
+            raise ValueError(msg)
 
         super(NormalizingFlowModel, self).__init__(
                 in_dim=in_dim, out_dim=out_dim)
@@ -98,6 +108,11 @@ class NormalizingFlowModel(Model):
         --------
         norm_flow.NormalizingFlow object corresponding to the input tensor.
         """
+        if y is not None and self.transform_type is None:
+            raise ValueError("Model not conditional 'y' must be None.")
+        if y is None and self.transform_type is not None:
+            raise ValueError("Model is conditional 'y' must be passed.")
+
         if y is None:
             if self.norm_flow is not None:
                 return self.norm_flow
@@ -114,6 +129,39 @@ class NormalizingFlowModel(Model):
 
             param_shape = self.norm_flow_type.get_param_shape(
                     dim=self.out_dim, **self.norm_flow_params)
+
+            if self.norm_flow_type is TimeAutoRegressivePlanarFlow:
+                # the case of auto-regressive flow of has a specific treatment
+                # of input mapping to parameters of the flow.
+                trans_out_dim = param_shape[0] * param_shape[2] * param_shape[4]
+                # TODO: Check whether the input dimension is correct which is
+                # (# examples, # time steps, space dimensionality)
+                time, space_dim = self.in_dim
+                # Two consecutive times
+                trans_in_dim = space_dim * 2 
+                transform = self.transform_type(
+                        in_dim=trans_in_dim, out_dim=trans_out_dim,
+                        **self.transform_params)
+                # reshape input into consecutive time points
+                # turn y shape into time_consecutive tensor
+                print tf.concat([y[:, :-1], y[:, 1:]], axis=-1).shape
+                gov_params = transform.operator(
+                        tf.concat([y[:, :-1], y[:, 1:]], axis=-1))
+                gov_params = tf.reshape(
+                        gov_params,
+                        (num_flow, param_shape[1]) + param_shape[:1] + param_shape[2:])
+                gov_params = tf.transpose(
+                        gov_params, perm=[0, 2, 1, 3, 4, 5])
+                # Construct each flow
+                flows = []
+                for i in range(num_flow):
+                    flows.append(self.norm_flow_type(
+                            dim=self.out_dim, gov_param=gov_params[i],
+                            **self.norm_flow_params))
+                self.norm_flow_dict[y] = flows
+                return flows
+
+            # The other straight forward cases
             # Compute the flattened parameter shape
             trans_out_dim = 1
             for dim in param_shape:
