@@ -144,7 +144,6 @@ class NormalizingFlowModel(Model):
                         **self.transform_params)
                 # reshape input into consecutive time points
                 # turn y shape into time_consecutive tensor
-                print tf.concat([y[:, :-1], y[:, 1:]], axis=-1).shape
                 gov_params = transform.operator(
                         tf.concat([y[:, :-1], y[:, 1:]], axis=-1))
                 gov_params = tf.reshape(
