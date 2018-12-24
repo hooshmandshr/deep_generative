@@ -27,17 +27,27 @@ class MarkovDynamics(Model):
         order: int
             Order of the markov process that expresses our dynamics.
         """
+        self.order = order
         self.time_steps = time_steps
         # In effect, the prior of the dynamical system.
         self.init_model = init_model
         self.transition_model = transition_model
         # dimension of each state
-        self.state_dim = self.transition_model.in_dim
+        self.state_dim = self.transition_model.out_dim
+        # Check whether there is enough history for the order of the
+        # Markov process
+        if not time_steps > order:
+            raise ValueError("'time_steps' must be more that 'order'.")
         if isinstance(self.init_model, Model):
-            if self.state_dim == self.init_model.out_dim:
+            if not self.state_dim == self.order * self.init_model.out_dim:
                 msg = "Dimensions of prior and transition model mismatch: {}, {}."
                 raise ValueError(msg.format(
                     self.state_dim, self.init_model.out_dim))
+        # Check that the input dim of transition matches the order of Markov
+        # model.
+        if not(self.transition_model.in_dim == order * self.state_dim):
+            msg = "Input to transition model should have dim {}"
+            raise ValueError(msg.format(order * self.state_dim))
 
         super(MarkovDynamics, self).__init__(out_dim=self.state_dim * time_steps)
 
@@ -48,12 +58,15 @@ class MarkovDynamics(Model):
         -------
         x: tf.Tensor
             Shape of x should match the shape of model. In other words,
-            (?, ..., T, D)
+            (?, T, D)
         """
-        log_prob = self.init_model.log_prob(x[:, 0, :])
-        for i in range(1, self.time_steps):
+        n_sample = x.shape[0].value
+        log_prob = self.init_model.log_prob(
+                tf.reshape(x[:, :self.order, :], [n_sample, -1]))
+        for i in range(self.order, self.time_steps):
+            y = tf.reshape(x[:, i - self.order:i, :], [n_sample, -1])
             log_prob += self.transition_model.log_prob(
-                    x=x[:, i, :], y=x[:, i - 1, :])
+                    x=x[:, i, :], y=y)
         return log_prob
 
     def sample(self, n_samples, time_steps=None):
@@ -74,10 +87,19 @@ class MarkovDynamics(Model):
             time_steps = self.time_steps
         # Sample from the prior distribution for initial state.
         states = []
-        states.append(self.init_model.sample((1, n_samples)))
-        for i in range(time_steps - 1):
+        init_states = self.init_model.sample((1, n_samples))
+        init_states = tf.transpose(
+                tf.reshape(init_states, [n_samples, self.order, self.state_dim]),
+                perm=[1, 0, 2])
+        for i in range(init_states.shape[0].value):
+            states.append(init_states[i:i+1])
+        # draw from the transition model.
+        for i in range(time_steps - self.order):
+            y = tf.reshape(
+                    tf.transpose(tf.concat(states[-self.order:], axis=0), [1, 0, 2]),
+                    [n_samples, -1])
             states.append(self.transition_model.sample(
-                y=states[-1][0], n_samples=1))
+                y=y, n_samples=1))
         return tf.transpose(tf.concat(states, axis=0), perm=[1, 0, 2])
 
 
@@ -181,7 +203,7 @@ class LatentLinearDynamicalSystem(MarkovLatentDynamics):
     """Class for implementation of Kalman-Filter generative model."""
 
     def __init__(self, lat_dim, obs_dim, time_steps, emission_model,
-            init_transition_matrix_bias=None, full_covariance=True):
+            init_transition_matrix_bias=None, full_covariance=True, order=1):
         """Sets up the parameters of the Kalman filter sets up super class.
 
         params:
@@ -199,37 +221,39 @@ class LatentLinearDynamicalSystem(MarkovLatentDynamics):
         self.obs_dim = obs_dim
 
         self.full_covariance = full_covariance
-        mean_0 = np.random.normal(0, 1, lat_dim)
+        mean_0 = np.random.normal(0, 1, lat_dim * order)
         if full_covariance:
             dist = tf.contrib.distributions.MultivariateNormalTriL
-            cov_0 = tf.Variable(np.eye(lat_dim))
+            cov_0 = tf.Variable(np.eye(lat_dim * order))
         else:
             dist = tf.contrib.distributions.MultivariateNormalDiag
-            cov_0 = tf.nn.softplus(tf.Variable(np.ones(lat_dim)))
+            cov_0 = tf.nn.softplus(tf.Variable(np.ones(lat_dim * order)))
 
         # Transition matrix for the linear function.
         if init_transition_matrix_bias is None:
             self.transition_matrix = tf.Variable(
-                    np.random.normal(0, 1, [lat_dim + 1, lat_dim]))
+                    np.random.normal(0, 1, [(lat_dim * order) + 1, lat_dim]))
         else:
             self.transition_matrix = tf.Variable(init_transition_matrix_bias)
         prior = dist(mean_0, cov_0)
         # Transition model
         transition_model = ReparameterizedDistribution(
-                out_dim=lat_dim, in_dim=lat_dim, transform=LinearTransform,
+                out_dim=lat_dim, in_dim=lat_dim * order,
+                transform=LinearTransform,
                 distribution=dist, reparam_scale=False,
                 gov_param=self.transition_matrix)
 
         super(LatentLinearDynamicalSystem, self).__init__(
                 init_model=prior, transition_model=transition_model,
-                emission_model=emission_model, time_steps=time_steps)
+                emission_model=emission_model, time_steps=time_steps,
+                order=order)
 
 
 class KalmanFilter(LatentLinearDynamicalSystem):
     """Class for implementation of Kalman-Filter generative model."""
 
     def __init__(self, lat_dim, obs_dim, time_steps,
-            init_transition_matrix_bias=None, full_covariance=True):
+            init_transition_matrix_bias=None, full_covariance=True, order=1):
         """Sets up the parameters of the Kalman filter sets up super class.
 
         params:
@@ -261,7 +285,7 @@ class KalmanFilter(LatentLinearDynamicalSystem):
                 lat_dim=lat_dim, obs_dim=obs_dim, time_steps=time_steps,
                 emission_model=emission_model,
                 init_transition_matrix_bias=init_transition_matrix_bias,
-                full_covariance=full_covariance)
+                full_covariance=full_covariance, order=order)
 
 
 class FLDS(LatentLinearDynamicalSystem):
@@ -269,7 +293,7 @@ class FLDS(LatentLinearDynamicalSystem):
 
     def __init__(self, lat_dim, obs_dim, time_steps, nonlinear_transform,
             init_transition_matrix_bias=None, poisson=False,
-            full_covariance=True, **kwargs):
+            full_covariance=True, order=1, **kwargs):
         """Sets up the parameters of the Kalman filter sets up super class.
 
         params:
@@ -304,5 +328,5 @@ class FLDS(LatentLinearDynamicalSystem):
                 lat_dim=lat_dim, obs_dim=obs_dim, time_steps=time_steps,
                 emission_model=emission_model,
                 init_transition_matrix_bias=init_transition_matrix_bias,
-                full_covariance=full_covariance)
+                full_covariance=full_covariance, order=order)
 
