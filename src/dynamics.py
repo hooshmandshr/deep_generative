@@ -69,7 +69,7 @@ class MarkovDynamics(Model):
                     x=x[:, i, :], y=y)
         return log_prob
 
-    def sample(self, n_samples, time_steps=None):
+    def sample(self, n_samples, init_states=None, time_steps=None):
         """Samples from the markov dynamics model.
 
         params:
@@ -87,10 +87,18 @@ class MarkovDynamics(Model):
             time_steps = self.time_steps
         # Sample from the prior distribution for initial state.
         states = []
-        init_states = self.init_model.sample((1, n_samples))
-        init_states = tf.transpose(
-                tf.reshape(init_states, [n_samples, self.order, self.state_dim]),
-                perm=[1, 0, 2])
+
+        if init_states is not None:
+            assert isinstance(init_states, tf.Tensor)
+            assert init_states.shape.as_list() == [n_samples, self.order, self.state_dim]
+        else:
+            init_states = self.init_model.sample((1, n_samples))
+            init_states = tf.reshape(
+                    init_states, [n_samples, self.order, self.state_dim])
+        # Transpose time dimension and example dimension so that
+        # states can line up as input to transition function.
+        init_states = tf.transpose(init_states, perm=[1, 0, 2])
+
         for i in range(init_states.shape[0].value):
             states.append(init_states[i:i+1])
         # draw from the transition model.
@@ -169,7 +177,7 @@ class MarkovLatentDynamics(MarkovDynamics):
             return tf.reshape(log_p, [out_shape, -1])
         return log_p
 
-    def sample(self, n_samples, y=None, time_steps=None):
+    def sample(self, n_samples, init_states=None, y=None, time_steps=None):
         """Samples from the full-joint model p(x, y).
 
         params:
@@ -190,7 +198,8 @@ class MarkovLatentDynamics(MarkovDynamics):
         latent_path = y
         if latent_path is None:
             latent_path = super(MarkovLatentDynamics, self).sample(
-                    n_samples=n_samples)
+                    n_samples=n_samples, init_states=init_states,
+                    time_steps=time_steps)
         observation_path = self.emission_model.sample(
             n_samples=(), y=latent_path)
 
