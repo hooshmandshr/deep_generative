@@ -150,24 +150,27 @@ class LinearTransform(Transform):
         return linear_output 
 
 
-class LorentzTransform(Transform):
+class LorenzTransform(Transform):
 
-    def __init__(self, initial_value=None, name=None):
+    def __init__(self, in_dim, out_dim,
+            initial_value=None, gov_param=None, name=None,
+            time_delta=0.03):
         """Sets up Lorentz transformation variables."""
-        super(LorentzTransform, self).__init__(
-                in_dim=3, out_dim=3, initial_value=initial_value, name=name)
+        super(LorenzTransform, self).__init__(
+                in_dim=3, out_dim=3,
+                initial_value=initial_value, gov_param=gov_param, name=name)
 
         self.param_shape = ((3,))
         self.check_param_shape()
 
-        # Partition the variable into parameters of a Lorentz transfrom.
+        # Partition the variable into parameters of a Lorenz transfrom.
         self.sigma = self.var[0]
         self.rho = self.var[1]
         self.beta = self.var[2]
-        self.time_delta = 0.03
+        self.time_delta = time_delta
 
     def operator(self, x):
-        """Return a discretized Lorentz transformation."""
+        """Return a discretized Lorenz transformation."""
         if not(x.shape[-1].value == 3):
             raise ValueError('Dimension of variable should be 3')
         x_ = tf.slice(x, [0, 0], [-1, 1])

@@ -275,7 +275,7 @@ class KalmanFilter(LatentLinearDynamicalSystem):
         full_covariance: bool
             Covariance matrices are full if True, otherwise, diagonal.
         """
-        mean_0 = np.random.normal(0, 1, lat_dim)
+
         if full_covariance:
             dist = tf.contrib.distributions.MultivariateNormalTriL
         else:
@@ -319,7 +319,7 @@ class FLDS(LatentLinearDynamicalSystem):
         full_covariance: bool
             Covariance matrices are full if True, otherwise, diagonal.
         """
-        mean_0 = np.random.normal(0, 1, lat_dim)
+
         if poisson:
             dist = MultiPoisson
         if full_covariance:
