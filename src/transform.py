@@ -1,7 +1,9 @@
 """Class for implementation of major transformations."""
 
+
 import numpy as np
 import tensorflow as tf
+
 
 class Transform(object):
 
@@ -242,4 +244,72 @@ class MultiLayerPerceptron(Transform):
         for layer in self.layers:
             output = layer.operator(output)
         return output
+
+
+class LSTMcell(Transform):
+
+    def __init__(self, in_dim, out_dim, gov_param=None, initial_value=None,
+            name=None):
+        """Sets up the layers of lstm.
+
+        params:
+        -------
+        in_dim: int
+            Dimensionality of input.
+        out_dim: int
+            Dimensionality of output.
+        """
+        super(LSTMcell, self).__init__(
+                in_dim, out_dim, gov_param=gov_param,
+                initial_value=initial_value, name=name)
+        # Make sure initialization and parameters are correct.
+        # W_f, U_f, b_f
+        # W_i, U_i, b_i
+        # W_o, U_o, b_o
+        # W_c, U_c, b_c
+        self.param_shape = (4*(in_dim + out_dim + 1), out_dim)
+        self.check_param_shape()
+
+        # Partitioning the variable into respective variables of a linear
+        # trnsformation.
+        idxs = np.array([0, self.in_dim, self.out_dim, 1]).cumsum()
+        self.w = {}
+        self.u = {}
+        self.b = {}
+        for offset, node in enumerate(['f', 'i', 'o', 'c']):
+            idxs += offset
+            self.w[node] = self.var[idxs[0]:idxs[1]]
+            self.u[node] = self.var[idxs[1]:idxs[2]]
+            self.b[node] = self.var[idxs[2]:idxs[3]]
+
+    def initializer(self):
+        """Overriden function to do Xavier initialization."""
+        self.var = tf.Variable(np.random.normal(
+                0, np.sqrt(1. / self.in_dim), self.param_shape))
+
+    def get_regularizer(self, scale=1.):
+        return NotImplementedError("LSTM does not have.")
+
+    def operator(self, x, h, c):
+        """Operation that transforms the input and the previous state.
+
+        params:
+        -------
+        x: tf.Tensor
+            Shape is (?, in_dim). Current observation.
+        h: tf.Tensor
+            Shape is (?, out_dim). The previous state.
+
+        returns:
+        --------
+        Tuple of tf.Tensor with shape (?, out_dim) which is the next state of the lstm.
+        """
+        self.check_input_shape(x)
+        lin_comb = {}
+        for node in ['f', 'i', 'o', 'c']:
+            lin_comb[node] = tf.sigmoid(
+                    tf.matmul(x, self.w['f']) + tf.matmul(h, self.u['f']) + self.b['f'])
+        c_star = lin_comb['f'] * c + lin_comb['i'] * tf.tanh(lin_comb['c'])
+        h_star = lin_comb['o'] * tf.tanh(c_star)
+        return h_star, c_star
 
