@@ -69,15 +69,19 @@ class MarkovDynamics(Model):
                     x=x[:, i, :], y=y)
         return log_prob
 
-    def sample(self, n_samples, init_states=None, time_steps=None):
+    def sample(self, n_samples, init_states=None, time_steps=None,
+            stochastic=True):
         """Samples from the markov dynamics model.
 
         params:
         -------
         n_samples: int
         time_steps: int or None
-        If None the numbe of states in the samples will be equal to that
-        of the model.
+            If None the numbe of states in the samples will be equal to that
+            of the model.
+        stochastic: bool
+            If True, you samples are return from the model. If Flase, given
+            initial states, the system is evolved deterministically.
 
         Returns:
         --------
@@ -106,8 +110,15 @@ class MarkovDynamics(Model):
             y = tf.reshape(
                     tf.transpose(tf.concat(states[-self.order:], axis=0), [1, 0, 2]),
                     [n_samples, -1])
-            states.append(self.transition_model.sample(
-                y=y, n_samples=1))
+            if not stochastic and isinstance(self.transition_model,
+                    ReparameterizedDistribution):
+                # If deterministic sampling (i.e. evolution is required)
+                det_trans = self.transition_model.transforms[0].operator(y)
+                states.append(tf.expand_dims(det_trans, axis=0))
+            else:
+                states.append(self.transition_model.sample(
+                    y=y, n_samples=1))
+
         return tf.transpose(tf.concat(states, axis=0), perm=[1, 0, 2])
 
 
@@ -177,7 +188,8 @@ class MarkovLatentDynamics(MarkovDynamics):
             return tf.reshape(log_p, [out_shape, -1])
         return log_p
 
-    def sample(self, n_samples, init_states=None, y=None, time_steps=None):
+    def sample(self, n_samples, init_states=None, y=None, time_steps=None,
+            stochastic=True):
         """Samples from the full-joint model p(x, y).
 
         params:
@@ -199,7 +211,7 @@ class MarkovLatentDynamics(MarkovDynamics):
         if latent_path is None:
             latent_path = super(MarkovLatentDynamics, self).sample(
                     n_samples=n_samples, init_states=init_states,
-                    time_steps=time_steps)
+                    time_steps=time_steps, stochastic=stochastic)
         observation_path = self.emission_model.sample(
             n_samples=(), y=latent_path)
 
@@ -338,4 +350,108 @@ class FLDS(LatentLinearDynamicalSystem):
                 emission_model=emission_model,
                 init_transition_matrix_bias=init_transition_matrix_bias,
                 full_covariance=full_covariance, order=order)
+
+
+class MarkovDynamicsDiagnostics(object):
+    """Class for general diagnostics of dynamical systems."""
+
+    def __init__(self, dynamics, n_samples, grid_size, time_forward):
+        """Sets up the necessary operations like extrapolation.
+
+        params:
+        -------
+        """
+        if not isinstance(dynamics, MarkovDynamics):
+            raise ValueError("dynamics should be dynamics.MarkovDynamics")
+        self.dynamics = dynamics
+        self.n_samples = n_samples
+        self.time_forward = time_forward
+        self.grid_size = grid_size
+
+        # Dictionary that keeps placeholders and tensors that keep their
+        # Extrapolated versions.
+        self.init_tensor = {}
+        self.extr_tensor = {}
+        in_tensor, ex_tensor = self.init_extrapolate(
+                n_init_points=self.n_samples, time_forward=self.time_forward)
+        self.init_tensor["default"] = in_tensor
+        self.extr_tensor["default"] = ex_tensor
+
+        # Make the tensors for the grids.
+        self.grid_size = grid_size
+        if self.dynamics.order == 1:
+            # Set up a tensor for all the initial states.
+            in_tensor, ex_tensor = self.init_extrapolate(
+                n_init_points=self.grid_size, time_forward=2, stochastic=False)
+            self.init_tensor["grid"] = in_tensor
+            self.extr_tensor["grid"] = ex_tensor
+
+    def init_extrapolate(self, n_init_points, time_forward, stochastic=True):
+        """Sets up tensors and operations for stochastic extrapolations.
+
+        params:
+        -------
+        n_init_points: int
+            The number of initial points that the dynamics extrapolates from.
+        time_forward: int
+            The number of total time points to extrapolate to.
+        stochastic: bool
+            Whether to evolve the states stochastically. If reparameterization,
+            use the analytic mean of the model.
+
+        returns:
+        --------
+        tuple of tf.Tensor, first is the place holder for the initial points
+        and the second is for the extrapolation.
+        """
+        order = self.dynamics.order
+        init_tensor = tf.placeholder(
+                shape=[n_init_points, order, self.dynamics.state_dim],
+                dtype=tf.float64, name="stateholder")
+        extrapolate_tensor = self.dynamics.sample(
+                n_samples=n_init_points,
+                init_states=init_tensor, time_steps=time_forward,
+                stochastic=stochastic)
+        return init_tensor, extrapolate_tensor
+
+    def run_extrapolate(self, sess, states, name="default"):
+        """Runs and return sthe result of given extrapolation.
+
+        params:
+        -------
+        sess: tf.Session
+            The open session of under which the dynamics system is open.
+        states: np.ndarray
+        name: string
+            Key for the init and extrapolate tensor.
+        """
+        if not isinstance(states, np.ndarray):
+            raise ValueError("States must be np.ndarray.")
+        if len(states.shape) == 1:
+            if not states.shape == (self.dynamics.state_dim,):
+                raise ValueError("Input dimension should be {}".format(
+                    self.dynamics.state_dim))
+            # Put the singe state into correct shape for sampling from the
+            # dynamics model.
+            # Get the number of samples from the correspondent tensor.
+            n_samples = self.init_tensor[name].shape[0].value
+            states = states[None, None, :].repeat(n_samples, axis=0)
+        else:
+            if name == "grid":
+                if not states.shape == (self.grid_size, self.dynamics.state_dim):
+                    raise ValueError("Shape of grid must be {}.".format(
+                        (self.grid_size, self.dynamics.state_dim)))
+                # Reshape the states to match the init_tensor placeholder of
+                # the grid extrapolation.
+                states = states[:, None, :]
+
+            elif not states.shape == self.init_tensor[name].shape:
+                raise ValueError("Shape of states must be {}".format(
+                    self.init_tensor.shape))
+        stochastic = True
+        if name == "grid":
+            stochastic = False
+        output = sess.run(self.extr_tensor[name],
+                feed_dict={self.init_tensor[name].name: states})
+        return output
 
