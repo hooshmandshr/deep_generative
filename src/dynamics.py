@@ -414,12 +414,12 @@ class MarkovDynamicsDiagnostics(object):
                 stochastic=stochastic)
         return init_tensor, extrapolate_tensor
 
-    def run_extrapolate(self, sess, states, name="default"):
+    def run_extrapolate(self, session, states, name="default"):
         """Runs and return sthe result of given extrapolation.
 
         params:
         -------
-        sess: tf.Session
+        session: tf.Session
             The open session of under which the dynamics system is open.
         states: np.ndarray
         name: string
@@ -451,7 +451,7 @@ class MarkovDynamicsDiagnostics(object):
         stochastic = True
         if name == "grid":
             stochastic = False
-        output = sess.run(self.extr_tensor[name],
+        output = session.run(self.extr_tensor[name],
                 feed_dict={self.init_tensor[name].name: states})
         return output
 
