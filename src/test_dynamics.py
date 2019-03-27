@@ -7,7 +7,7 @@ import tensorflow as tf
 from dynamics import KalmanFilter, MarkovDynamicsDiagnostics
 
 
-def test_kalman_filter():
+def test_kalman_filter(full_covar=False):
     """Tester for Kalman Filter and dynamics diagnostics class."""
 
     obs_dim = 7
@@ -33,7 +33,7 @@ def test_kalman_filter():
                 lat_dim=lat_dim, obs_dim=obs_dim,
                 time_steps=time,
                 init_transition_matrix_bias=trans_matrix,
-                full_covariance=False, order=order)
+                full_covariance=full_covar, order=order)
         # sample 10 additional steps in time
         samples = kf.sample(n_examples, time_steps=time)
 
@@ -71,4 +71,5 @@ def test_kalman_filter():
 
 
 if __name__ == "__main__":
-    test_kalman_filter()
+    test_kalman_filter(full_covar=False)
+    test_kalman_filter(full_covar=True)

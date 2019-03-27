@@ -260,6 +260,7 @@ class LatentLinearDynamicalSystem(MarkovLatentDynamics):
             self.transition_matrix = tf.Variable(init_transition_matrix_bias)
         prior = dist(mean_0, cov_0)
 
+        # Covariance Matrix cholesky factor of evolution.
         cov_t = None
         if full_covariance:
             cov_t = tf.Variable(np.eye(lat_dim))
@@ -270,7 +271,7 @@ class LatentLinearDynamicalSystem(MarkovLatentDynamics):
                 out_dim=lat_dim, in_dim=lat_dim * order,
                 transform=LinearTransform,
                 distribution=dist, reparam_scale=cov_t,
-                gov_param=self.transition_matrix)
+                has_bias=False, gov_param=self.transition_matrix)
 
         # Covariance parameters are cholesky factors, so multiply to get the
         # covariances.

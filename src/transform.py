@@ -108,7 +108,7 @@ class Transform(object):
 class LinearTransform(Transform):
 
     def __init__(self, in_dim, out_dim, initial_value=None, gov_param=None,
-            non_linearity=None, name=None):
+            has_bias=True, non_linearity=None, name=None):
         """Sets up the linear transformation and bias variables.
 
         params:
@@ -131,6 +131,7 @@ class LinearTransform(Transform):
         self.lin_trans = self.var[:-1]
         self.bias = self.var[-1]
         self.non_linearity = non_linearity
+        self.has_bias = has_bias
 
     def initializer(self):
         """Overriden function to do Xavier initialization."""
@@ -146,7 +147,9 @@ class LinearTransform(Transform):
         self.check_input_shape(x)
         t_matrix = self.lin_trans
         bias = self.bias
-        linear_output = tf.matmul(x, t_matrix) + bias
+        linear_output = tf.matmul(x, t_matrix)
+        if self.has_bias:
+            linear_output += bias
         if self.non_linearity is not None:
             return self.non_linearity(linear_output)
         return linear_output 

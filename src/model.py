@@ -169,7 +169,7 @@ class ReparameterizedDistribution(Model):
                 **self.trans_args))
 
         # Reparameteriz scale if needed.
-        if self.reparam_scale:
+        if self.reparam_scale == True:
             if self.dist_class is DIAG_GAUSSIAN or\
                     self.dist_class is LogitNormalDiag:
                 # Diagonal Covariance.
