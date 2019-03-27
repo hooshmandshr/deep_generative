@@ -60,6 +60,8 @@ class AutoEncodingVariationalBayes(object):
         self.train_op = self.opt.minimize(-self.elbo + 0.01 * regularizer)
         # Indicate that there is no open session.
         self.sess = None
+        # shuffled indices
+        self.idx = np.array([]).astype(np.int)
 
     def get_elbo(self):
         """Computes the evidence lower bound of the model."""
@@ -120,6 +122,17 @@ class AutoEncodingVariationalBayes(object):
     def set_data(self):
         pass
 
+    def next_idx(self):
+        """Returns the next idx of of the shuffled training data."""
+        if len(self.idx) < self.batch_size:
+            new_idxs = np.random.permutation(
+                    np.random.permutation(self.data_size))
+            self.idx = np.append(self.idx, new_idxs)
+
+        out_idx = self.idx[:self.batch_size]
+        self.idx = self.idx[self.batch_size:]
+        return out_idx
+
     def train(self, steps, fetch_losses=True):
         """Trains the models for a fixed step size.
 
@@ -140,16 +153,16 @@ class AutoEncodingVariationalBayes(object):
         self.make_session()
         losses = []
         for i in tqdm(range(steps)):
-            idx = (i * self.batch_size) % (self.data_size - self.batch_size)
+            idx = self.next_idx()
             if fetch_losses:
                 iteration_elbo, _ = self.sess.run(
                         [self.elbo, self.train_op],
-                        feed_dict={"input:0": self.data[idx:idx + self.batch_size]})
+                        feed_dict={"input:0": self.data[idx]})
                 losses.append(iteration_elbo)
             else:
                 self.sess.run(
                         self.train_op,
-                        feed_dict={"input:0": self.data[idx:idx + self.batch_size]})
+                        feed_dict={"input:0": self.data[idx]})
         return losses
 
     def check_examples_shape(self, examples):
@@ -222,7 +235,7 @@ class FLDSVB(AutoEncodingVariationalBayes):
 
     def __init__(self, data, lat_dim, nonlinear_transform, poisson=False,
             optimizer=None, n_monte_carlo_samples=1, batch_size=1,
-            full_covariance=True, **kwargs):
+            full_covariance=True, shared_params=True, **kwargs):
         """
         params:
         -------
@@ -242,6 +255,10 @@ class FLDSVB(AutoEncodingVariationalBayes):
             Number of monte-carlo examples to be used for estimation of ELBO.
         batch_size: int
             Batch size for stochastic estimation of ELBO.
+        shared_params: bool
+            If True, the recognition and generative models share parameters
+            Q, Q1, A. Otherwise, the recognition model has it's own LDS
+            parameters.
         **kwargs:
             Arguments for neural network function corresponding to the
             generative function.
@@ -257,10 +274,16 @@ class FLDSVB(AutoEncodingVariationalBayes):
                 poisson=self.poisson,
                 nonlinear_transform=nonlinear_transform, **kwargs)
 
+        # (Q1, Q, A)
+        lds_params = None
+        if shared_params:
+            lds_params = gen_model.get_linear_dynamics_params()
+
         recon_model = ReparameterizedDistribution(
                 in_dim=(self.time, self.obs_dim),
                 out_dim=(self.time, self.lat_dim),
                 distribution=MultiplicativeNormal,
+                mult_normal_vars=lds_params,
                 transform=MLP, hidden_units=[self.obs_dim * 2, self.obs_dim])
 
         super(FLDSVB, self).__init__(

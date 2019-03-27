@@ -48,15 +48,17 @@ def test_kalman_filter():
         with tf.Session() as sess:
             sess.run(tf.global_variables_initializer())
             data = sess.run(samples)
-            extrapolation1 = diag.run_extrapolate(sess=sess, states=init_states)
+            extrapolation1 = diag.run_extrapolate(
+                    session=sess, states=init_states)
 
         # Single initial states with multiple samples
         init_states = np.random.normal(3, 1, lat_dim)
         with tf.Session() as sess:
             sess.run(tf.global_variables_initializer())
-            extrapolation2 = diag.run_extrapolate(sess=sess, states=init_states)
+            extrapolation2 = diag.run_extrapolate(
+                    session=sess, states=init_states)
             grid_out = diag.run_extrapolate(
-                    sess=sess, states=grid, name="grid")
+                    session=sess, states=grid, name="grid")
 
         assert data[0].shape == (n_examples, time, lat_dim)
         assert data[1].shape == (n_examples, time, obs_dim)

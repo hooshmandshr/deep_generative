@@ -242,7 +242,9 @@ class LatentLinearDynamicalSystem(MarkovLatentDynamics):
         self.obs_dim = obs_dim
 
         self.full_covariance = full_covariance
-        mean_0 = np.random.normal(0, 1, lat_dim * order)
+        # TODO: determine what the initial point is.
+        # mean_0 = np.random.normal(0, 1, lat_dim * order)
+        mean_0 = np.zeros(lat_dim * order)
         if full_covariance:
             dist = tf.contrib.distributions.MultivariateNormalTriL
             cov_0 = tf.Variable(np.eye(lat_dim * order))
@@ -257,17 +259,41 @@ class LatentLinearDynamicalSystem(MarkovLatentDynamics):
         else:
             self.transition_matrix = tf.Variable(init_transition_matrix_bias)
         prior = dist(mean_0, cov_0)
+
+        cov_t = None
+        if full_covariance:
+            cov_t = tf.Variable(np.eye(lat_dim))
+        else:
+            cov_t = tf.Variable(np.zeros(lat_dim))
         # Transition model
         transition_model = ReparameterizedDistribution(
                 out_dim=lat_dim, in_dim=lat_dim * order,
                 transform=LinearTransform,
-                distribution=dist, reparam_scale=False,
+                distribution=dist, reparam_scale=cov_t,
                 gov_param=self.transition_matrix)
+
+        # Covariance parameters are cholesky factors, so multiply to get the
+        # covariances.
+        q_factor = transition_model.scale_param
+        self.q_init = None
+        self.q_matrix = cov_t
+        if not full_covariance:
+            self.q_init = tf.diag(cov_0)
+            self.q_matrix = tf.diag(tf.nn.softplus(cov_t))
+        else:
+            self.q_init = tf.matmul(cov_0, cov_0, transpose_b=True)
+            self.q_matrix = tf.matmul(cov_t, cov_t, transpose_b=True)
+        self.a_matrix = self.transition_matrix[:lat_dim]
+
 
         super(LatentLinearDynamicalSystem, self).__init__(
                 init_model=prior, transition_model=transition_model,
                 emission_model=emission_model, time_steps=time_steps,
                 order=order)
+
+    def get_linear_dynamics_params(self):
+        """Gets parameter of the latent LDS i.e. Q1, Q, A."""
+        return self.q_init, self.q_matrix, self.a_matrix
 
 
 class KalmanFilter(LatentLinearDynamicalSystem):

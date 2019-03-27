@@ -62,7 +62,7 @@ class TrajectoryPlot(object):
             if plt_ax is None:
                 fig, ax = plt.subplots()
 
-            ax.plot(range(self.num_time_steps), data_[:, :, 0].T, **kwargs)
+            ax.plot(range(data_.shape[0]), data_[:, :, 0].T, **kwargs)
             ax.set_xlabel("Time step")
             ax.set_ylabel(ax_str.format(axes[0]))
 

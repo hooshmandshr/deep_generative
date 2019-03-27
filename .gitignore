@@ -2,4 +2,7 @@
 *.pyc
 # temporary files
 *~
-# src/*.ipynb
+*.pdf
+src/*.ipynb
+*.npy
+src/.*

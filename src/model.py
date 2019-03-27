@@ -18,7 +18,6 @@ FULL_GAUSSIAN = tf.contrib.distributions.MultivariateNormalTriL
 DIAG_GAUSSIAN = tf.contrib.distributions.MultivariateNormalDiag
 
 
-
 class Model(object):
     """Abstract class for implementing models in form p(x|y) or p(x)."""
 
@@ -70,7 +69,7 @@ class ReparameterizedDistribution(Model):
     """
 
     def __init__(self, out_dim, in_dim, distribution, transform,
-            reparam_scale=True, **kwargs):
+            reparam_scale=True, mult_normal_vars=None, **kwargs):
         """Initializes the model object and sets up necessary variables.
 
         params:
@@ -99,6 +98,10 @@ class ReparameterizedDistribution(Model):
             distribution. If False, a tf.Variable will be randomly initialized.
             If a tf.Tensor, the given tensor will be the scale parameter of
             the distribution.
+        mult_normal_vars: None or tuple
+            If not None, it must be a list of tf.Tensor of length 3 that
+            respectively are Q1, Q, A matrices where each have shape
+            (out_dim, out_dim).
         **kwargs:
             parameters to be passed to the Transform constructors.
         """    
@@ -117,6 +120,19 @@ class ReparameterizedDistribution(Model):
         # The logical order of these transformation should be handled
         # internally based on the distribution class.
         self.transforms = []
+        self.mult_normal_vars = mult_normal_vars
+        if self.mult_normal_vars is not None:
+            msg = "mult_normal_vars must be None or a tuple of 3 tf.Tensor"
+            msg += "with shape ({}, {}).".format(out_dim[-1], out_dim[-1])
+            if not isinstance(self.mult_normal_vars, tuple):
+                raise ValueError(msg)
+            if not len(self.mult_normal_vars) == 3:
+                raise ValueError(msg)
+            for e in self.mult_normal_vars:
+                if not isinstance(e, tf.Tensor):
+                    raise ValueError(msg)
+                if not e.shape == (out_dim[-1], out_dim[-1]):
+                    raise ValueError(msg)
 
     def get_transforms(self):
         """Initializes or gets the transformations necessary for reparam.
@@ -283,20 +299,42 @@ class ReparameterizedDistribution(Model):
             dtype = y.dtype
             n_ex = y.shape[0].value
             # Free parameters for covariances and transition matrix.
-            def get_cholesky_factor_variable():
-                shape = [n_ex, out_dim, out_dim]
-                if n_ex == 0:
-                    shape = [out_dim, out_dim]
+            # Shape of Q1, Q, A
+            var_shape = [1, out_dim, out_dim]
+            if n_ex == 0:
+                var_shape = [out_dim, out_dim]
+            def get_cholesky_factor_variable(index=0):
+                """Gets cholesky factor variable serving as SPD matrix."""
                 # Get a lower triangular variable
                 var = tf.linalg.band_part(tf.Variable(
-                        np.random.normal(0, 1, shape),
+                        np.random.normal(0, 1, var_shape),
                         dtype=dtype), -1, 0)
                 return tf.matmul(var, var, transpose_b=True)
-            # Shape of each parameter.
-            a_shape = [n_ex, out_dim, out_dim]
-            if n_ex == 0:
-                a_shape = a_shape[1:]
-            a_matrix = tf.Variable(np.random.normal(0, 1, a_shape), dtype=dtype)
+
+            if self.mult_normal_vars is None:
+                # Initialize the variables of the distribution.
+                # These variables are Q1, Q, A
+                q_init=get_cholesky_factor_variable()
+                q_matrix=get_cholesky_factor_variable()
+                # Shape of each parameter.
+                a_matrix = tf.Variable(
+                        np.random.normal(0, 1, var_shape), dtype=dtype)
+            else:
+                # Q1, Q, A are given as parameters to the initializer of the
+                # CLass.
+                q_init = self.mult_normal_vars[0]
+                q_matrix = self.mult_normal_vars[1]
+                a_matrix = self.mult_normal_vars[2]
+                if n_ex > 0:
+                    q_init = tf.expand_dims(q_init, axis=0)
+                    q_matrix = tf.expand_dims(q_matrix, axis=0)
+                    a_matrix = tf.expand_dims(a_matrix, axis=0)
+
+            if n_ex > 0:
+                q_init = tf.concat([q_init for i in range(n_ex)], axis=0)
+                q_matrix = tf.concat([q_matrix for i in range(n_ex)], axis=0)
+                a_matrix = tf.concat([a_matrix for i in range(n_ex)], axis=0)
+
             # c_matrix should be semi-positive definite
             c_matrix = tf.linalg.band_part(tf.reshape(transforms[0].operator(y),
                 [-1, time, out_dim, out_dim]), -1, 0)
@@ -304,8 +342,8 @@ class ReparameterizedDistribution(Model):
             m_matrix = transforms[1].operator(y)
 
             dist = MultiplicativeNormal(
-                    q_init=get_cholesky_factor_variable(),
-                    q_matrix=get_cholesky_factor_variable(),
+                    q_init=q_init,
+                    q_matrix=q_matrix,
                     a_matrix=a_matrix,
                     c_matrix=c_matrix,
                     m_matrix=m_matrix)
