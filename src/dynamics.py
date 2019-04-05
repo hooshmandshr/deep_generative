@@ -48,7 +48,7 @@ class MarkovDynamics(Model):
         if not(self.transition_model.in_dim == order * self.state_dim):
             msg = "Input to transition model should have dim {}"
             raise ValueError(msg.format(order * self.state_dim))
-
+        self.out_shape = (time_steps, self.state_dim)
         super(MarkovDynamics, self).__init__(out_dim=self.state_dim * time_steps)
 
     def log_prob(self, x):
@@ -218,6 +218,12 @@ class MarkovLatentDynamics(MarkovDynamics):
         if y is not None:
             return observation_path
         return latent_path, observation_path
+
+    def get_dynamics_model(self):
+        """Returns the dynamics model only (prior)."""
+        return MarkovDynamics(
+                init_model=self.init_model, transition_model=self.transition_model,
+                time_steps=self.time_steps, order=self.order)
 
 
 class LatentLinearDynamicalSystem(MarkovLatentDynamics):

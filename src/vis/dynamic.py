@@ -62,9 +62,9 @@ class TrajectoryPlot(object):
             if plt_ax is None:
                 fig, ax = plt.subplots()
 
-            ax.plot(range(data_.shape[0]), data_[:, :, 0].T, **kwargs)
+            ax.plot(range(data_.shape[1]), data_[:, :, 0].T, **kwargs)
             ax.set_xlabel("Time step")
-            ax.set_ylabel(ax_str.format(axes[0]))
+            ax.set_ylabel(ax_str.format(axes[0] + 1))
 
         elif len(axes) == 2:
             # Plot one axis vs. a second one.
@@ -72,8 +72,10 @@ class TrajectoryPlot(object):
                 fig, ax = plt.subplots()
 
             ax.plot(data_[:, :, 0].T, data_[:, :, 1].T, **kwargs)
-            ax.set_xlabel(ax_str.format(axes[0]))
-            ax.set_ylabel(ax_str.format(axes[1]))
+            for i in range(data_.shape[0]):
+                ax.scatter(data_[i, 0, 0], data_[i, 0, 1], **kwargs)
+            ax.set_xlabel(ax_str.format(axes[0] + 1))
+            ax.set_ylabel(ax_str.format(axes[1] + 1))
 
         elif len(axes) == 3:
             # Plot 3d trajectories in the plots.
@@ -83,7 +85,8 @@ class TrajectoryPlot(object):
             for i in range(data_.shape[0]):
                 ax.plot(data_[i, :, 0], data_[i, :, 1], data_[i, :, 2],
                         **kwargs)
-
+                ax.scatter(data_[i, 0, 0], data_[i, 0, 1], data_[i, 0, 2],
+                        **kwargs)
                 ax.set_xlabel(ax_str.format(axes[0] + 1))
                 ax.set_ylabel(ax_str.format(axes[1] + 1))
                 ax.set_zlabel(ax_str.format(axes[2] + 1))
