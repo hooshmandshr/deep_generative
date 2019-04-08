@@ -95,14 +95,14 @@ def test_autoregressive_flow():
     n_sweep = 2
     n_layer = 3
 
-    def run_tf_flow(input_val, dim, gov_param=None):
+    def run_tf_flow(input_val, dim, gov_param=None, backward=False):
         with tf.Graph().as_default():
             g_param = None
             if gov_param is not None:
                 g_param = tf.constant(gov_param)
             flow = TimeAutoRegressivePlanarFlow(dim=dim,
                     num_sweep=n_sweep, num_layer=n_layer,
-                    gov_param=g_param)
+                    gov_param=g_param, backward=backward)
             x = tf.constant(input_val)
             y = flow.operator(x)
             z = flow.log_det_jacobian(x)
@@ -132,13 +132,23 @@ def test_autoregressive_flow():
     assert output_det_jacobian.shape == (n_example,), 'Testing log det jacobian.'
 
     param = np.random.rand(
-            n_sweep, time - 1, n_layer, 1, 2 * 2 * space_dim + 1)
+            1, n_sweep, time - 1, n_layer, 1, 2 * 2 * space_dim + 1)
     output, output_det_jacobian = run_tf_flow(
             input_, dim=dim, gov_param=param)
 
     print "Multiple auto-regressive flow transformation." 
     assert output.shape == (n_example, time, space_dim), 'Testing output shape.'
     assert output_det_jacobian.shape == (n_example,), 'Testing log det jacobian.'
+
+    param = np.random.rand(
+            2, n_sweep, time - 1, n_layer, 1, 2 * 2 * space_dim + 1)
+    output, output_det_jacobian = run_tf_flow(
+            input_, dim=dim, gov_param=param, backward=True)
+
+    print "Multiple auto-regressive flow transformation with backward pass."
+    assert output.shape == (n_example, time, space_dim), 'Testing output shape.'
+    assert output_det_jacobian.shape == (n_example,), 'Testing log det jacobian.'
+
 
 
 if __name__ == "__main__":
