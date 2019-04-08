@@ -15,7 +15,8 @@ class AutoEncodingVariationalBayes(object):
     """Class that implements the AEVB algorithm."""
 
     def __init__(self, data, generative_model, recognition_model, prior=None,
-            optimizer=None, n_monte_carlo_samples=1, batch_size=1):
+            optimizer=None, n_monte_carlo_samples=1, batch_size=1,
+            reg_coeff=0.01):
         """
         params:
         -------
@@ -57,7 +58,7 @@ class AutoEncodingVariationalBayes(object):
         self.get_elbo()
         regularizer = self.gen_model.get_regularizer()
         regularizer += self.rec_model.get_regularizer()
-        self.train_op = self.opt.minimize(-self.elbo + 0.01 * regularizer)
+        self.train_op = self.opt.minimize(-self.elbo + reg_coeff * regularizer)
         # Indicate that there is no open session.
         self.sess = None
         # shuffled indices
