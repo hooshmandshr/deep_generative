@@ -310,7 +310,7 @@ class TimeAutoRegressivePlanarFlow(NormalizingFlow):
                         if self.var is not None:
                             gov_param = self.var[fb_idx, sweep, time, layer, :, :]
                         if self.initial_value is not None:
-                            init_value = self.initial_value[sweep, time, layer, :, :]
+                            init_value = self.initial_value[fb_idx, sweep, time, layer, :, :]
                         flow = PlanarFlow(
                                 dim=self.space_dim * 2,
                                 non_linearity=self.non_linearity,

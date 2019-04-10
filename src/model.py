@@ -11,7 +11,7 @@ import numpy as np
 import tensorflow as tf
 
 from distribution import LogitNormalDiag, MultiPoisson, MultiplicativeNormal,\
-        MultiBernoulli
+        MultiBernoulli, StateSpaceNormalDiag
 
 
 FULL_GAUSSIAN = tf.contrib.distributions.MultivariateNormalTriL
@@ -133,6 +133,13 @@ class ReparameterizedDistribution(Model):
                     raise ValueError(msg)
                 if not e.shape == (out_dim[-1], out_dim[-1]):
                     raise ValueError(msg)
+        if self.dist_class is StateSpaceNormalDiag:
+            if not(len(in_dim) == 2 and len(out_dim) == 2):
+                raise ValueError(
+                        "in_dim and out_dim must be 2 dimensional for StateSpaceNormalDiag.")
+            if not(in_dim[0] == out_dim[0]):
+                raise ValueError(
+                        "First dimension of out_dim and in_dim should be the same for StateSpaceNormalDiag.")
 
     def get_transforms(self):
         """Initializes or gets the transformations necessary for reparam.
@@ -163,6 +170,14 @@ class ReparameterizedDistribution(Model):
                 in_dim=in_dim,
                 out_dim=out_dim,
                 **self.trans_args))
+        elif self.dist_class is StateSpaceNormalDiag:
+            self.transforms.append(self.transform_class(
+                in_dim=self.in_dim[1], out_dim=self.out_dim[1],
+                **self.trans_args))
+            self.transforms.append(self.transform_class(
+                in_dim=self.in_dim[1], out_dim=self.out_dim[1],
+                **self.trans_args))
+
         else: 
             self.transforms.append(self.transform_class(
                 in_dim=self.in_dim, out_dim=self.out_dim,
@@ -211,8 +226,10 @@ class ReparameterizedDistribution(Model):
         --------
         tf.Distribution for p(x|y) if y is None 
         """
-        if not y.shape[-1].value == self.in_dim:
-            if not self.dist_class is MultiplicativeNormal: 
+        if not self.dist_class is MultiplicativeNormal:
+            if self.dist_class is StateSpaceNormalDiag:
+                pass
+            elif not y.shape[-1].value == self.in_dim:
                 raise ValueError(
                         "Input must have dimension {}".format(self.in_dim))
         if y in self.dist_dict:
@@ -250,6 +267,18 @@ class ReparameterizedDistribution(Model):
                 scale_ = tf.nn.softplus(tf.reshape(scale_, scale_shape))
 
             dist = self.dist_class(loc=loc_, scale_diag=scale_)
+
+        elif self.dist_class is StateSpaceNormalDiag:
+            # Rectify standard deviation so that it is a smooth
+            # positive function
+            loc_ = transforms[0].operator(y)
+            scale_ = self.reparam_scale
+            if self.reparam_scale is True:
+                scale_ = tf.nn.softplus(transforms[1].operator(y))
+            else:
+                raise NotImplemented(
+                        "Use StateSpaceNormalDiag with reparam_scale=True")
+            dist = self.dist_class(loc=loc_, scale=scale_)
 
         # Multivariate Poisson (independent variables).
         elif self.dist_class is MultiPoisson:

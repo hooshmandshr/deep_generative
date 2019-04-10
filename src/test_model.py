@@ -4,8 +4,9 @@
 import numpy as np
 import tensorflow as tf
 
+from distribution import StateSpaceNormalDiag
 from model import ReparameterizedDistribution
-from transform import LinearTransform
+from transform import LinearTransform, MultiLayerPerceptron
 
 
 def test_reparam_gaussian_full_covar():
@@ -45,6 +46,35 @@ def test_reparam_gaussian_full_covar():
     print "Testing that the covariance of the distributions are all the same."
     assert np.allclose(tf_cov[0][0], tf_cov[0][1])
 
+
+def test_state_space_normal_diag():
+    """Tester for correctness of StateSpaceNormalDiag transformation."""
+
+    time = 5
+    in_dim = 3
+    out_dim = 2
+    n_sample = 100
+
+    tot_dist = 1
+    input_ = np.random.rand(tot_dist, time, in_dim)
+
+    with tf.Graph().as_default():
+        input_tensor = tf.constant(input_)
+        d_1 = ReparameterizedDistribution(
+                out_dim=(time, out_dim), in_dim=(time, in_dim),
+                distribution=StateSpaceNormalDiag,
+                transform=MultiLayerPerceptron,
+                reparam_scale=True, hidden_units=[20, 20])
+        s_1 = d_1.sample(n_samples=n_sample, y=input_tensor)
+        with tf.Session() as sess:
+            sess.run(tf.global_variables_initializer())
+            tf_res = sess.run(s_1)
+
+    expected_shape = (n_sample, tot_dist, time, out_dim)
+    print "Testing the shape of the StateSpaceNormalDiag samples."
+    assert tf_res.shape == expected_shape, "sample shape not correct."
+
+
 if __name__ == "__main__":
     test_reparam_gaussian_full_covar()
-
+    test_state_space_normal_diag()
