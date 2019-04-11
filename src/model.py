@@ -197,20 +197,6 @@ class ReparameterizedDistribution(Model):
                 self.transforms.append(self.transform_class(
                     in_dim=self.in_dim, out_dim=self.out_dim * self.out_dim,
                     **self.trans_args))
-            # MultiplicativeNormal for LDS models.
-            elif self.dist_class is MultiplicativeNormal: 
-                in_time, in_dim = self.in_dim
-                time, out_dim = self.out_dim
-                # Parameters of the C matrix.
-                self.transforms.append(self.transform_class(
-                    in_dim=in_dim,
-                    out_dim=out_dim * out_dim,
-                    **self.trans_args))
-                # Parameters of the M matrix.
-                self.transforms.append(self.transform_class(
-                    in_dim=in_dim,
-                    out_dim=out_dim,
-                    **self.trans_args))
 
         return self.transforms
   
