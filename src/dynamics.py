@@ -298,8 +298,17 @@ class LatentLinearDynamicalSystem(MarkovLatentDynamics):
                 emission_model=emission_model, time_steps=time_steps,
                 order=order)
 
-    def get_linear_dynamics_params(self):
-        """Gets parameter of the latent LDS i.e. Q1, Q, A."""
+    def get_linear_dynamics_params(self, transpose_a=False):
+        """Gets parameter of the latent LDS i.e. Q1, Q, A.
+
+        params:
+        -------
+        transpose_a: bool
+            If True return transposed a_matrix. This is due to the fact that
+            linear transformation class instead of Ax applies x^TA.
+        """
+        if transpose_a:
+            return self.q_init, self.q_matrix, tf.transpose(self.a_matrix)
         return self.q_init, self.q_matrix, self.a_matrix
 
 

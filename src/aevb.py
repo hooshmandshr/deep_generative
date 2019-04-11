@@ -278,7 +278,10 @@ class FLDSVB(AutoEncodingVariationalBayes):
         # (Q1, Q, A)
         lds_params = None
         if shared_params:
-            lds_params = gen_model.get_linear_dynamics_params()
+            # Transpose is necessary because our linear transformation class
+            # does x^TA therefore a transpose is needed to go to canonical form
+            # of vector transformation.
+            lds_params = gen_model.get_linear_dynamics_params(transpose_a=True)
 
         recon_model = ReparameterizedDistribution(
                 in_dim=(self.time, self.obs_dim),

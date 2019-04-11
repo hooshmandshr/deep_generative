@@ -177,17 +177,18 @@ class MultiplicativeNormal(BlockTriDiagonalNormal):
         # covariance of the resulting Gaussian.
         q_1_inv = tf.linalg.inv(q_init)
         q_inv = tf.linalg.inv(q_matrix)
-        aqat_1 = tf.matmul(
-                tf.matmul(a_matrix, q_1_inv), a_matrix, transpose_b=True)
-        aqat = tf.matmul(
-                tf.matmul(a_matrix, q_inv), a_matrix, transpose_b=True)
+        atqa = tf.matmul(
+                tf.matmul(a_matrix, q_inv, transpose_a=True), a_matrix)
+        minus_qa = - tf.matmul(q_inv, a_matrix)
+        q_plus_atqa = q_inv + atqa
         # construct the diagonal and off-diagnoal blocks of the inverse
         # covariance.
-        diag_blocks = [q_1_inv, aqat_1 + q_inv]
-        offdiag_blocks = [-tf.matmul(a_matrix, q_1_inv)]
-        for i in range(2, self.time):
-            diag_blocks.append(aqat + q_inv)
-            offdiag_blocks.append(-tf.matmul(a_matrix, q_inv))
+        diag_blocks = [q_1_inv + atqa]
+        offdiag_blocks = [minus_qa]
+        for i in range(1, self.time - 1):
+            diag_blocks.append(q_plus_atqa)
+            offdiag_blocks.append(minus_qa)
+        diag_blocks.append(q_inv)
         # Expand and concat the list into a tensor.
         diag_blocks = tf.concat(
                 [tf.expand_dims(t, -3) for t in diag_blocks], axis=-3)

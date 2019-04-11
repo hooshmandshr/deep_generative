@@ -70,8 +70,8 @@ def test_multiplicative_normal():
     dense_q = dense_matrix(np.array([q1] + [q for i in range(time - 1)]))
     dense_c_inv = dense_matrix(c_inv)
     cov_inv = np.matmul(
-            np.matmul(dense_eye_minus_a, np.linalg.inv(dense_q)),
-            dense_eye_minus_a.T) + dense_c_inv
+            np.matmul(dense_eye_minus_a.T, np.linalg.inv(dense_q)),
+            dense_eye_minus_a) + dense_c_inv
     cov = np.linalg.inv(cov_inv)
 
     mu = np.matmul(np.matmul(cov, dense_c_inv), m.reshape([dim * time, 1]))
