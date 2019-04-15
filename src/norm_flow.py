@@ -441,7 +441,7 @@ class TimeAutoRegressivePlanarFlow(NormalizingFlow):
 
 class AffineFlow(NormalizingFlow):
 
-    def __init__(self, dim, non_linearity=tf.tanh, gov_param=None,
+    def __init__(self, dim, non_linearity=tf.tanh, n_comp=1, gov_param=None,
             initial_value=None, enforce_inverse=True, lower=True, name=None):
         """Sets up the universal properties of any transformation function.
 
@@ -467,14 +467,15 @@ class AffineFlow(NormalizingFlow):
                 initial_value=initial_value, name=name)
         # Set the rest of the attributes.
         self.non_linearity = non_linearity
+        self.n_comp = n_comp
         # Make sure the shape of the parameters is correct.
-        self.param_shape = AffineFlow.get_param_shape(dim=dim)
+        self.param_shape = AffineFlow.get_param_shape(dim=dim, n_comp=n_comp)
         self.check_param_shape()
 
         # Partition the variable into variables of the planar flow.
         self.lower = lower
-        self.a_matrix = self.var[:dim]
-        self.bias = self.var[dim:]
+        self.a_matrix = self.var[:, :dim]
+        self.bias = self.var[:, dim:]
 
         if enforce_inverse:
             self.enforce_invertiblity()
@@ -492,10 +493,10 @@ class AffineFlow(NormalizingFlow):
 
         if self.non_linearity is tf.tanh:
             # Ensure that the diagonal elements of the matrix are all
-            # bigger that -1
-            diag_part = tf.diag_part(self.a_matrix)
-            self.a_matrix += - tf.diag(diag_part) + tf.diag(
-                    tf.nn.softplus(diag_part) - 1)
+            # bigger that -1/N where N is total parallel affine transformations
+            diag_part = tf.matrix_diag_part(self.a_matrix)
+            self.a_matrix += - tf.matrix_diag(diag_part) + tf.matrix_diag(
+                    tf.nn.softplus(diag_part) - 1./self.n_comp)
 
     def non_linearity_derivative(self, x):
         """Operation for the derivative of the non linearity function."""
@@ -507,7 +508,9 @@ class AffineFlow(NormalizingFlow):
         if x in self.tensor_map:
             return self.tensor_map[x]
 
-        result = tf.matmul(x, self.a_matrix) + self.bias
+        x_ = tf.expand_dims(x, axis=0)
+        x_ = tf.concat([x_ for i in range(self.n_comp)], axis=0)
+        result = tf.matmul(x_, self.a_matrix) + self.bias
 
         self.tensor_map[x] = result
         return result
@@ -525,7 +528,7 @@ class AffineFlow(NormalizingFlow):
         tf.Tensor.
         """
         dial = self.matmul(x)
-        result = x + self.non_linearity(dial)
+        result = x + tf.reduce_sum(self.non_linearity(dial), axis=0)
         return result
 
     def log_det_jacobian(self, x):
@@ -543,11 +546,15 @@ class AffineFlow(NormalizingFlow):
         dial = self.non_linearity_derivative(self.matmul(x))
 
         result = tf.reduce_sum(
-                tf.log(1. + tf.diag_part(self.a_matrix) * dial), axis=1)
+                tf.log(
+                    1. + tf.reduce_sum(tf.expand_dims(
+                        tf.matrix_diag_part(self.a_matrix), axis=1) * dial, axis=0)),
+                axis=1)
         return result
 
     @staticmethod
     def get_param_shape(**kwargs):
         """Gets the shape of the governing parameters of the transform."""
         dim = kwargs["dim"]
-        return (dim + 1, dim)
+        n_comp = kwargs["n_comp"]
+        return (n_comp, dim + 1, dim)
