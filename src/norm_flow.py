@@ -466,6 +466,12 @@ class AffineFlow(NormalizingFlow):
         super(AffineFlow, self).__init__(dim=dim, gov_param=gov_param,
                 initial_value=initial_value, name=name)
         # Set the rest of the attributes.
+        nl = non_linearity
+        if not(nl is tf.tanh or nl is tf.nn.sigmoid or nl is tf.nn.softplus):
+            raise NotImplemented(
+                    "Only {}, {}, {} non-linearities are compatible.".format(
+                        "tf.tanh", "tf.nn.sigmoid", "tf.nn.softplus"))
+
         self.non_linearity = non_linearity
         self.n_comp = n_comp
         # Make sure the shape of the parameters is correct.
@@ -491,17 +497,23 @@ class AffineFlow(NormalizingFlow):
         else:
             self.a_matrix = tf.matrix_band_part(self.a_matrix, -1, 0)
 
-        if self.non_linearity is tf.tanh:
-            # Ensure that the diagonal elements of the matrix are all
-            # bigger that -1/N where N is total parallel affine transformations
-            diag_part = tf.matrix_diag_part(self.a_matrix)
-            self.a_matrix += - tf.matrix_diag(diag_part) + tf.matrix_diag(
-                    tf.nn.softplus(diag_part) - 1./self.n_comp)
+        # Ensure that the diagonal elements of the matrix are all
+        # bigger that -1/N where N is total parallel affine transformations
+        threshold = 1.
+        if self.non_linearity is tf.nn.sigmoid:
+            threshold = 2.
+        diag_part = tf.matrix_diag_part(self.a_matrix)
+        self.a_matrix += - tf.matrix_diag(diag_part) + tf.matrix_diag(
+                tf.nn.softplus(diag_part) - threshold / self.n_comp)
 
     def non_linearity_derivative(self, x):
         """Operation for the derivative of the non linearity function."""
         if self.non_linearity is tf.tanh:
             return 1. - tf.square(tf.tanh(x))
+        elif self.non_linearity is tf.nn.sigmoid:
+            return (1. - tf.square(tf.tanh(x))) / 2.
+        elif self.non_linearity is tf.nn.softplus:
+            return tf.nn.sigmoid(x)
 
     def matmul(self, x):
         """Computes the inner product part of the transformation."""
