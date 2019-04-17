@@ -190,7 +190,8 @@ class LorenzTransform(Transform):
 class MultiLayerPerceptron(Transform):
 
     def __init__(self, in_dim, out_dim, hidden_units,
-            activation=tf.nn.relu, output_activation=None, name=None):
+            activation=tf.nn.relu, residual=False, output_activation=None,
+            name=None):
         """
         Sets up the layers of the MLP transformation.
 
@@ -221,6 +222,7 @@ class MultiLayerPerceptron(Transform):
                     non_linearity=activation)
             self.layers.append(layer_t)
             in_dim = n_units
+        self.residual = residual
 
     def get_regularizer(self, scale=1.):
         """Regularizer for the weights of the multilayer perceptron."""
@@ -246,6 +248,8 @@ class MultiLayerPerceptron(Transform):
         output = x
         for layer in self.layers:
             output = layer.operator(output)
+        if self.residual:
+            return x + output
         return output
 
 

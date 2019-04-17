@@ -31,11 +31,10 @@ def plot_elbo(elbo, skip=10, epoch=None, offset=0, **kwargs):
     elbo_avg = np.mean(np.reshape(elbo_, [-1, skip]), axis=-1)
     x = np.arange(offset + offset_2, len(elbo), skip)
     if epoch is not None:
-        x = x // epoch
+        x = x / (epoch * 1.)
         plt.xlabel("Epochs")
     else:
         plt.xlabel("Iterations")
 
-    print len(x), len(elbo_avg)
     plt.plot(x, elbo_avg, **kwargs)
     plt.ylabel("ELBO")
