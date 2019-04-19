@@ -136,7 +136,9 @@ class LinearTransform(Transform):
     def initializer(self):
         """Overriden function to do Xavier initialization."""
         init_val = np.random.normal(
-                0, np.sqrt(2. / self.in_dim + self.out_dim), self.param_shape)
+                0, np.sqrt(2. / (self.in_dim + self.out_dim)),
+                self.param_shape)
+        # Set bias to zero.
         init_val[-1] *= 0.
         self.var = tf.Variable(init_val)
 
@@ -294,7 +296,8 @@ class LSTMcell(Transform):
     def initializer(self):
         """Overriden function to do Xavier initialization."""
         self.var = tf.Variable(np.random.normal(
-                0, np.sqrt(2. / self.in_dim + self.out_dim), self.param_shape))
+                0, np.sqrt(2. / (self.in_dim + self.out_dim)),
+                self.param_shape))
 
     def get_regularizer(self, scale=1.):
         return NotImplementedError("LSTM does not have.")
