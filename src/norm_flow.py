@@ -144,6 +144,14 @@ class PlanarFlow(NormalizingFlow):
 
         return result
 
+    def initializer(self):
+        """Default initializer of the transformation class."""
+        init_val = np.zeros(self.param_shape)
+        # Xaviar initializer unifrom for w parameter.
+        lim = np.sqrt(6. / (1. + self.dim))
+        init_val[:, :self.dim] = np.random.uniform(-lim, lim, self.dim)
+        self.var = tf.Variable(init_val)
+
     @staticmethod
     def get_param_shape(**kwargs):
         """Gets the shape of the governing parameters of the transform."""
@@ -223,6 +231,15 @@ class MultiLayerPlanarFlow(NormalizingFlow):
             result += layer.log_det_jacobian(inter_trans)
             inter_trans = layer.operator(inter_trans)
         return result
+
+    def initializer(self):
+        """Default initializer of the transformation class."""
+        init_val = np.zeros(self.param_shape)
+        # Xaviar initializer unifrom for w parameter.
+        lim = np.sqrt(6. / (1. + self.dim))
+        init_val[:, :, :self.dim] = np.random.uniform(
+                -lim, lim, [self.num_layer, 1, self.dim])
+        self.var = tf.Variable(init_val)
 
     @staticmethod
     def get_param_shape(**kwargs):

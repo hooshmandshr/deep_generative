@@ -10,6 +10,7 @@ import tensorflow as tf
 from distribution import MultiPoisson
 from model import Model, ReparameterizedDistribution
 from transform import LinearTransform
+from transform import MultiLayerPerceptron as MLP
 
 
 class MarkovDynamics(Model):
@@ -121,6 +122,65 @@ class MarkovDynamics(Model):
 
         return tf.transpose(tf.concat(states, axis=0), perm=[1, 0, 2])
 
+
+class DeepKalmanFilter(Model):
+
+    def __init__(self, state_dim, trans_hidden_units, time_steps):
+        """Sets up the necessary networks for the markov dynamics.
+
+        params:
+        -------
+        state_dim: int
+        obs_dim: int
+        trans_hidden_units: list of int
+        """
+        self.time_steps = time_steps
+        # dimension of each state space
+        self.state_dim = state_dim
+        self.dist_type = tf.contrib.distributions.MultivariateNormalDiag
+
+        self.init_model = self.dist_type(
+                tf.Variable(np.zeros(self.state_dim)),
+                tf.nn.softplus(tf.Variable(np.ones(self.state_dim))))
+        # List of transformation per each step
+        self.time_transition_model = []
+        for time in range(self.time_steps - 1):
+            self.time_transition_model.append(
+                    ReparameterizedDistribution(
+                        out_dim=self.state_dim, in_dim=self.state_dim,
+                        transform=MLP,
+                        distribution=self.dist_type,
+                        hidden_units=trans_hidden_units))
+
+    def sample(self, n_samples):
+        """Log probability of the dynamics model p(x) = p(x1, x2, ...).
+
+        params:
+        -------
+        n_samples: int
+            Number of samples (paths).
+        """
+        samples = []
+        samples.append(
+                self.init_model.sample([1, n_samples]))
+        for time_model in self.time_transition_model:
+            samples.append(time_model.sample(n_samples=1, y=samples[-1][0]))
+
+        return tf.transpose(tf.concat(samples, axis=0), perm=[1, 0, 2])
+
+    def log_prob(self, x):
+        """Log probability of the dynamics model p(x) = p(x1, x2, ...).
+
+        params:
+        -------
+        x: tf.Tensor
+            Shape of x should match the shape of model. In other words,
+            (?, T, D)
+        """
+        log_prob = self.init_model.log_prob(x[:, 0])
+        for t, model in enumerate(self.time_transition_model):
+            log_prob += model.log_prob(x=x[:, t + 1], y=x[:, t])
+        return log_prob
 
 class MarkovLatentDynamics(MarkovDynamics):
     """Class for expressing Laten Markov dynamics."""
