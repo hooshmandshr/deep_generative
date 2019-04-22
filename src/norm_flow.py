@@ -581,6 +581,15 @@ class AffineFlow(NormalizingFlow):
                 axis=1)
         return result
 
+    def initializer(self):
+        """Default initializer of the transformation class."""
+
+        # Xaviar initializer unifrom for w parameter.
+        std = np.sqrt(2. / (2 * self.dim))
+        init_val = np.random.normal(0, std, self.param_shape)
+        init_val[:, -1, :] *= 0.
+        self.var = tf.Variable(init_val)
+
     @staticmethod
     def get_param_shape(**kwargs):
         """Gets the shape of the governing parameters of the transform."""

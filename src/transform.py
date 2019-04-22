@@ -164,7 +164,7 @@ class LorenzTransform(Transform):
     def __init__(self, in_dim, out_dim,
             initial_value=None, gov_param=None, name=None,
             time_delta=0.03):
-        """Sets up Lorentz transformation variables."""
+        """Sets up Euler discretization of Lorenz attractor."""
         super(LorenzTransform, self).__init__(
                 in_dim=3, out_dim=3,
                 initial_value=initial_value, gov_param=gov_param, name=name)
@@ -189,6 +189,69 @@ class LorenzTransform(Transform):
             self.sigma * (y_ - x_),
             x_ * (self.rho - z_) - y_,
             x_ * y_ - self.beta * z_], axis=1)
+
+
+class RosslerTransform(Transform):
+
+    def __init__(self, in_dim, out_dim,
+            initial_value=None, gov_param=None, name=None,
+            time_delta=0.03):
+        """Sets up Euler discretization of Rossler attractor."""
+        super(RosslerTransform, self).__init__(
+                in_dim=3, out_dim=3,
+                initial_value=initial_value, gov_param=gov_param, name=name)
+
+        self.param_shape = ((3,))
+        self.check_param_shape()
+
+        # Partition the variable into parameters of a Lorenz transfrom.
+        self.a = self.var[0]
+        self.b = self.var[1]
+        self.c = self.var[2]
+        self.time_delta = time_delta
+
+    def operator(self, x):
+        """Return a discretized Lorenz transformation."""
+        if not(x.shape[-1].value == 3):
+            raise ValueError('Dimension of variable should be 3')
+        x_ = x[:, 0:1]
+        y_ = x[:, 1:2]
+        z_ = x[:, 2:]
+        return x + self.time_delta * tf.concat([
+            y_ - z_,
+            x_ + self.a * y_,
+            self.b + z_ * (x_ - self.c)], axis=1)
+
+
+class NagumoTransform(Transform):
+
+    def __init__(self, in_dim, out_dim,
+            initial_value=None, gov_param=None, name=None,
+            time_delta=0.03):
+        """Sets up Euler discretization of FitzHugh-Nagumo dynamics."""
+        super(NagumoTransform, self).__init__(
+                in_dim=2, out_dim=2,
+                initial_value=initial_value, gov_param=gov_param, name=name)
+
+        self.param_shape = ((4,))
+        self.check_param_shape()
+
+        # Partition the variable into parameters of a Lorenz transfrom.
+        self.a = self.var[0]
+        self.b = self.var[1]
+        self.i_ext = self.var[2]
+        self.tau = self.var[3]
+        self.time_delta = time_delta
+
+    def operator(self, x):
+        """Return a discretized Lorenz transformation."""
+        if not(x.shape[-1].value == 2):
+            raise ValueError('Dimension of variable should be 2')
+        v_ = x[:, 0:1]
+        w_ = x[:, 1:2]
+        return x + self.time_delta * tf.concat([
+            v_ - tf.math.pow(v_, 3) / 3. - w_ + self.i_ext,
+            (v_ + self.a - self.b * w_) / self.tau], axis=1)
 
 
 class MultiLayerPerceptron(Transform):
