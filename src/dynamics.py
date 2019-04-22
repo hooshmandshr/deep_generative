@@ -7,7 +7,7 @@ to easily sample from, compute density, etc.
 import numpy as np
 import tensorflow as tf
 
-from distribution import MultiPoisson
+from distribution import MultiPoisson, StateSpaceNormalDiag
 from model import Model, ReparameterizedDistribution
 from transform import LinearTransform
 from transform import MultiLayerPerceptron as MLP
@@ -123,7 +123,7 @@ class MarkovDynamics(Model):
         return tf.transpose(tf.concat(states, axis=0), perm=[1, 0, 2])
 
 
-class DeepKalmanFilter(Model):
+class TimeVariantDynamics(Model):
 
     def __init__(self, state_dim, trans_hidden_units, time_steps):
         """Sets up the necessary networks for the markov dynamics.
@@ -151,6 +151,7 @@ class DeepKalmanFilter(Model):
                         transform=MLP,
                         distribution=self.dist_type,
                         hidden_units=trans_hidden_units))
+        super(TimeVariantDynamics, self).__init__(out_dim=self.state_dim * time_steps)
 
     def sample(self, n_samples):
         """Log probability of the dynamics model p(x) = p(x1, x2, ...).
@@ -557,3 +558,100 @@ class MarkovDynamicsDiagnostics(object):
                 feed_dict={self.init_tensor[name].name: states})
         return output
 
+
+class DeepKalmanFilter(Model):
+
+    def __init__(self, in_dim, out_dim, time_steps, rnn_hdim):
+
+        super(DeepKalmanFilter, self).__init__(
+                in_dim=self.in_dim, out_dim=self.state_dim * time_steps)
+
+        self.state_dim = out_dim
+        self.rnn_hdim = rnn_hdim
+
+        self.backward = backward
+        self.mean_field = mean_field
+
+        # LSTM RNN functions.
+        self.rnn_fwd = LSTMcell(in_dim=self.in_dim, out_dim=rnn_hdim)
+        self.rnn_bck = None
+
+        self.linear_mu_fwd = LinearTransform(
+                in_dim=self.rnn_hdim, out_dim=self.state_dim)
+        self.linear_sg_fwd = LinearTransform(
+                in_dim=self.rnn_hdim, out_dim=self.state_dim)
+        self.linear_mu_bck = None
+        self.linear_sg_bck = None
+        # Factorization transition function
+        self.linear_transition = None
+
+        if self.mean_field:
+            if self.backward: 
+                self.linear_mu_bck = LinearTransform(
+                        in_dim=self.rnn_hdim, out_dim=self.state_dim)
+                self.linear_sg_bck = LinearTransform(
+                        in_dim=self.rnn_hdim, out_dim=self.state_dim)
+        else:
+            # Set up state transition function.
+            self.linear_transition = LinearTransform(
+                        in_dim=self.state_dim, out_dim=self.rnn_hdim)
+            if self.backward:
+                self.rnn_fwd = LSTMcell(in_dim=self.in_dim, out_dim=rnn_hdim)
+
+        self.dist_map = {}
+ 
+    def get_dist(self, y):
+        """Given observation, get parameteris of inference network."""
+
+        if y in self.dist_map:
+            return self.dist_map[y]
+
+        mu = None
+        sigma = None
+
+        # Get forward (and backward if necessary) states.
+        hidden_fwd = self.rnn_fwd.operator(y)
+        if self.backward:
+            hidden_bck = self.rnn_bck.operator(y)
+
+        if self.mean_field:
+            mu_fwd = self.linear_mu_fwd.operator(hidden_fwd)
+            sg_fwd = tf.nn.softplus(self.linear_sg_fwd.operator(hidden_fwd))
+
+            if self.backward:
+                mu_bck = self.linear_mu_bck.operator(hidden_bck)
+                sg_bck = tf.nn.softplus(self.linear_sg_bck.operator(hidden_bck))
+
+                sg_fwd_sqr = tf.square(sg_fwd)
+                sg_bck_sqr = tf.square(sg_bck)
+                sg_sqr_plus = sg_fwd_sqr + sg_bck_sqr
+                mu = (mu_fwd * sg_bck_sqr + mu_bck * sg_fwd_sqr) / sg_sqr_plus
+                sigma = sg_fwd_sqr * sg_bck_sqr / sg_sqr_plus
+            else:
+                mu = mu_fwd
+                sg = sg_fwd
+
+        else:
+            if self.backward:
+                hidden_cmb = 1./3. * tf.tanh(
+                        self.linear_transition(yslice) + hidden_fwd + hidden_bck)
+            else:
+                hidden_cmb = 1./2. * tf.tanh(
+                        self.linear_transition(yslice) + hidden_bck)
+ 
+            mu = self.linear_mu_fwd.operator(hidden_cmb)
+            sigma = tf.nn.softplus(self.linear_sg_fwd.operator(hidden_cmb))
+
+        self.dist_map[y] = StateSpaceNormalDiag(mu, sigma)
+        return self.dist_map[y]
+
+    def log_prob(x, y):
+        """Log prob of samples given observations."""
+        dist = self.get_dist(y)
+        return dist.log_prob(x)
+
+    def sample(n_samples, y):
+        """Samples from the inference model given observation."""
+        dist = self.get_dist(y)
+        return dist.sample(n_samples)
+          

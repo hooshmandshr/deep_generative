@@ -365,7 +365,7 @@ class LSTMcell(Transform):
     def get_regularizer(self, scale=1.):
         return NotImplementedError("LSTM does not have.")
 
-    def operator(self, x, h, c):
+    def operator(self, x, h=None, c=None):
         """Operation that transforms the input and the previous state.
 
         params:
@@ -379,6 +379,27 @@ class LSTMcell(Transform):
         --------
         Tuple of tf.Tensor with shape (?, out_dim) which is the next state of the lstm.
         """
+        if len(x.shape) == 3:
+            # Ignores c and h and initializes to zero
+            n_example = x.shape[1]
+            n_time = x.shape[0]
+            n_hidden_dim = self.out_dim
+            # Input hidden state
+            h = tf.constant(np.zeros([n_example, n_hidden_dim]))
+            # Input error carousel state
+            c = tf.constant(np.zeros([n_example, n_hidden_dim]))
+
+            output_h = [h]
+            output_c = [c]
+            for t in range(n_time):
+                hidden_t, carousel_t = self.operator(
+                        x=x[t], h=output_h[t], c=output_c[t])
+                output_h.append(hidden_t)
+                output_c.append(carousel_t)
+
+            return tf.concat(
+                    [tf.expand_dims(h, axis=0) for h in output_h[1:]], axis=0)
+
         self.check_input_shape(x)
         lin_comb = {}
         for node in ['f', 'i', 'o', 'c']:

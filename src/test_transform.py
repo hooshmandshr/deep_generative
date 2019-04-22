@@ -65,6 +65,23 @@ def test_lstm():
     msg = "Shape of LSTM output not correct."
     assert np.array(output).shape == (n_time + 1, n_example, n_hidden_dim), msg
 
+    with tf.Graph().as_default():
+        # Input
+        x = tf.constant(np.random.normal(0, 1, [n_time, n_example, n_dim]))
+        # Input hidden state
+        l = LSTMcell(in_dim=n_dim, out_dim=n_hidden_dim)
+        out = l.operator(x=x)
+
+        with tf.Session() as sess:
+            sess.run(tf.global_variables_initializer())
+            output = sess.run(out)
+
+    print("Testing LSTM output shape.")
+    msg = "Shape of LSTM output not correct."
+    assert np.array(output).shape == (n_time, n_example, n_hidden_dim), msg
+
+
+
 if __name__ == "__main__":
     test_linear()
     test_lstm()
