@@ -9,7 +9,7 @@ import tensorflow as tf
 
 from distribution import MultiPoisson, StateSpaceNormalDiag
 from model import Model, ReparameterizedDistribution
-from transform import LinearTransform, LSTMcell
+from transform import LinearTransform, LSTMcell, GatedTransition
 from transform import MultiLayerPerceptron as MLP
 
 
@@ -115,6 +115,12 @@ class MarkovDynamics(Model):
                     ReparameterizedDistribution):
                 # If deterministic sampling (i.e. evolution is required)
                 det_trans = self.transition_model.transforms[0].operator(y)
+                if isinstance(
+                        self.transition_model.transforms[0], GatedTransition):
+                    # If trans is gated transform then the transform outputs
+                    # a tuple of mu and sigma and we want mu in deterministic
+                    # transition.
+                    det_trans = det_trans[0]
                 states.append(tf.expand_dims(det_trans, axis=0))
             else:
                 states.append(self.transition_model.sample(
@@ -455,7 +461,7 @@ class FLDS(LatentLinearDynamicalSystem):
                 full_covariance=full_covariance, order=order)
 
 class MLPDynamics(MarkovLatentDynamics):
-    """Class for implementation of fLDS/pfLDS generative model."""
+    """Class for implementation of ffDS/pffDS generative model."""
 
     def __init__(self, lat_dim, obs_dim, time_steps, transition_layers,
             emission_transform, poisson=False,
@@ -502,6 +508,51 @@ class MLPDynamics(MarkovLatentDynamics):
                 distribution=em_dist, reparam_scale=False, **kwargs)
 
         super(MLPDynamics, self).__init__(
+                init_model=prior, transition_model=trans_model,
+                emission_model=emission_model, time_steps=time_steps)
+
+
+class DeepKalmanDynamics(MarkovLatentDynamics):
+    """Class for implementation of gated transition generative model."""
+
+    def __init__(self, lat_dim, obs_dim, time_steps, transition_units,
+            emission_layers, poisson=False):
+        """Sets up the parameters of the Kalman filter sets up super class.
+
+        params:
+        -------
+        lat_dim: int
+        obs_dim: int
+        time_steps: int
+        transition_units: int
+            Number of hidden units for the gated transition transform in DKF.
+        poisson: bool
+            True if observation is count data. Otherwise, observation is
+            continuous.
+        """
+        q_init = tf.Variable(np.ones(lat_dim))
+        dist = tf.contrib.distributions.MultivariateNormalDiag
+
+        em_dist = dist
+        if poisson:
+            em_dist = MultiPoisson
+
+        # Prior distribution for initial point
+        prior = dist(np.zeros(lat_dim), q_init)
+        # Transition model.
+        trans_model = ReparameterizedDistribution(
+                out_dim=lat_dim, in_dim=lat_dim,
+                transform=GatedTransition,
+                distribution=dist, reparam_scale=True,
+                hidden_units=transition_units)
+        # Emission model is reparameterized Gaussian with linear
+        # transformation.
+        emission_model = ReparameterizedDistribution(
+                out_dim=obs_dim, in_dim=lat_dim, transform=MLP,
+                distribution=em_dist, reparam_scale=False,
+                hidden_units=emission_layers)
+
+        super(DeepKalmanDynamics, self).__init__(
                 init_model=prior, transition_model=trans_model,
                 emission_model=emission_model, time_steps=time_steps)
 

@@ -12,7 +12,7 @@ import tensorflow as tf
 
 from distribution import LogitNormalDiag, MultiPoisson, MultiplicativeNormal,\
         MultiBernoulli, StateSpaceNormalDiag
-
+from transform import GatedTransition
 
 FULL_GAUSSIAN = tf.contrib.distributions.MultivariateNormalTriL
 DIAG_GAUSSIAN = tf.contrib.distributions.MultivariateNormalDiag
@@ -155,6 +155,13 @@ class ReparameterizedDistribution(Model):
         if len(self.transforms) > 0:
             return self.transforms
 
+        if self.transform_class is GatedTransition:
+            if self.dist_class is DIAG_GAUSSIAN:
+                # Only one transform is needed
+                self.transforms.append(self.transform_class(
+                        in_dim=self.in_dim, **self.trans_args))
+                return self.transforms
+
         # Regardless of distribution type, the location has the same
         # shape as the output.
         if self.dist_class is MultiplicativeNormal: 
@@ -228,6 +235,12 @@ class ReparameterizedDistribution(Model):
         # Multivariate (Logit) normal with diagonal covariance.
         if self.dist_class is DIAG_GAUSSIAN or\
                 self.dist_class is LogitNormalDiag:
+            if self.transform_class is GatedTransition:
+                # There is only one transformation that outputs two variabels.
+                loc, scale = transforms[0].operator(y)
+                dist = self.dist_class(loc, scale)
+                self.dist_dict[y] = dist
+                return dist
             # Rectify standard deviation so that it is a smooth
             # positive function
             loc_ = transforms[0].operator(y)

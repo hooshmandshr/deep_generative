@@ -409,3 +409,60 @@ class LSTMcell(Transform):
         h_star = lin_comb['o'] * tf.tanh(c_star)
         return h_star, c_star
 
+
+class GatedTransition(Transform):
+
+    def __init__(self, in_dim, hidden_units, name=None):
+        """
+        Sets up the layers of the MLP transformation.
+
+        params:
+        -------
+        in_dim: int
+        hidden_units: list of int
+            Number of hidden units per hidden layer respectively.
+        """
+        super(GatedTransition, self).__init__(
+                in_dim=in_dim, out_dim=in_dim, name=name)
+
+        self.hidden_units = hidden_units
+
+        # Initialize all the transformation that are needed.
+        self.gate_transform = MultiLayerPerceptron(
+                in_dim=self.in_dim, out_dim=self.in_dim,
+                hidden_units=[hidden_units], output_activation=tf.nn.sigmoid)
+        self.hidden_transform = MultiLayerPerceptron(
+                in_dim=self.in_dim, out_dim=self.in_dim,
+                hidden_units=[hidden_units])
+
+        self.mean_transform = LinearTransform(
+                in_dim=self.in_dim, out_dim=self.in_dim)
+        self.std_transform = LinearTransform(
+                in_dim=self.in_dim, out_dim=self.in_dim)
+
+    def get_regularizer(self, scale=1.):
+        """Regularizer for the weights of the multilayer perceptron."""
+        sum_all = 0.
+        sum_all += self.gate_transform.get_regularizer()
+        sum_all += self.hidden_transform.get_regularizer()
+        sum_all += self.mean_transform.get_regularizer()
+        sum_all += self.std_transform.get_regularizer()
+
+        return sum_all
+
+    def get_transformation_parameters(self):
+        """Returns the list of variables of the layers of the MLP.
+
+        returns:
+        --------
+        list of tensorflow.Tensor
+        """
+        msg = "Not implemented for GatedTransition."
+        raise NotImplemented(msg)
+
+    def operator(self, x):
+        gate = self.gate_transform.operator(x)
+        hidden = self.hidden_transform.operator(x)
+        mu = (1. - gate) * self.mean_transform.operator(x) + gate * hidden
+        std = tf.nn.softplus(self.std_transform.operator(tf.nn.relu(hidden)))
+        return mu, std
