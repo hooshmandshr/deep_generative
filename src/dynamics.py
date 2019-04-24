@@ -9,7 +9,7 @@ import tensorflow as tf
 
 from distribution import MultiPoisson, StateSpaceNormalDiag
 from model import Model, ReparameterizedDistribution
-from transform import LinearTransform
+from transform import LinearTransform, LSTMcell
 from transform import MultiLayerPerceptron as MLP
 
 
@@ -454,6 +454,57 @@ class FLDS(LatentLinearDynamicalSystem):
                 init_transition_matrix_bias=init_transition_matrix_bias,
                 full_covariance=full_covariance, order=order)
 
+class MLPDynamics(MarkovLatentDynamics):
+    """Class for implementation of fLDS/pfLDS generative model."""
+
+    def __init__(self, lat_dim, obs_dim, time_steps, transition_layers,
+            emission_transform, poisson=False,
+            full_covariance=False, **kwargs):
+        """Sets up the parameters of the Kalman filter sets up super class.
+
+        params:
+        -------
+        lat_dim: int
+        obs_dim: int
+        time_steps: int
+        transition_layers: list of int
+        nonlinear_transform: transform.Transform type
+        poisson: bool
+            True if observation is count data. Otherwise, observation is
+            continuous.
+        full_covariance: bool
+            Covariance matrices of noise processes are full if True. otherwise,
+            diagonal covariance.
+        """
+        if full_covariance:
+            q_init = tf.Variable(np.eye(lat_dim))
+            dist = tf.contrib.distributions.MultivariateNormalTriL
+        else:
+            q_init = tf.Variable(np.ones(lat_dim))
+            dist = tf.contrib.distributions.MultivariateNormalDiag
+
+        em_dist = dist
+        if poisson:
+            em_dist = MultiPoisson
+
+        # Prior distribution for initial point
+        prior = dist(np.zeros(lat_dim), q_init)
+        # Transition model.
+        trans_model = ReparameterizedDistribution(
+                out_dim=lat_dim, in_dim=lat_dim,
+                transform=MLP,
+                distribution=dist, reparam_scale=False,
+                hidden_units=transition_layers)
+        # Emission model is reparameterized Gaussian with linear
+        # transformation.
+        emission_model = ReparameterizedDistribution(
+                out_dim=obs_dim, in_dim=lat_dim, transform=emission_transform,
+                distribution=em_dist, reparam_scale=False, **kwargs)
+
+        super(MLPDynamics, self).__init__(
+                init_model=prior, transition_model=trans_model,
+                emission_model=emission_model, time_steps=time_steps)
+
 
 class MarkovDynamicsDiagnostics(object):
     """Class for general diagnostics of dynamical systems."""
@@ -561,20 +612,22 @@ class MarkovDynamicsDiagnostics(object):
 
 class DeepKalmanFilter(Model):
 
-    def __init__(self, in_dim, out_dim, time_steps, rnn_hdim):
+    def __init__(self, in_dim, out_dim, time_steps, rnn_hdim,
+            mean_field=True, backward=True):
 
         super(DeepKalmanFilter, self).__init__(
-                in_dim=self.in_dim, out_dim=self.state_dim * time_steps)
+                in_dim=in_dim, out_dim=out_dim * time_steps)
 
         self.state_dim = out_dim
         self.rnn_hdim = rnn_hdim
+        self.time_steps = time_steps
 
         self.backward = backward
         self.mean_field = mean_field
 
         # LSTM RNN functions.
         self.rnn_fwd = LSTMcell(in_dim=self.in_dim, out_dim=rnn_hdim)
-        self.rnn_bck = None
+        self.rnn_bck = LSTMcell(in_dim=self.in_dim, out_dim=rnn_hdim)
 
         self.linear_mu_fwd = LinearTransform(
                 in_dim=self.rnn_hdim, out_dim=self.state_dim)
@@ -598,21 +651,23 @@ class DeepKalmanFilter(Model):
             if self.backward:
                 self.rnn_fwd = LSTMcell(in_dim=self.in_dim, out_dim=rnn_hdim)
 
-        self.dist_map = {}
+        self.param_map = {}
+        self.log_prob_map = {}
  
-    def get_dist(self, y):
+    def get_param(self, y):
         """Given observation, get parameteris of inference network."""
 
-        if y in self.dist_map:
-            return self.dist_map[y]
+        if y in self.param_map:
+            return self.param_map[y]
 
         mu = None
         sigma = None
+        y_transpose = tf.transpose(y, perm=[1, 0, 2])
 
         # Get forward (and backward if necessary) states.
-        hidden_fwd = self.rnn_fwd.operator(y)
+        hidden_fwd = self.rnn_fwd.operator(y_transpose)
         if self.backward:
-            hidden_bck = self.rnn_bck.operator(y)
+            hidden_bck = self.rnn_bck.operator(y_transpose)
 
         if self.mean_field:
             mu_fwd = self.linear_mu_fwd.operator(hidden_fwd)
@@ -629,29 +684,60 @@ class DeepKalmanFilter(Model):
                 sigma = sg_fwd_sqr * sg_bck_sqr / sg_sqr_plus
             else:
                 mu = mu_fwd
-                sg = sg_fwd
+                sigma = sg_fwd
+            self.param_map[y] = (
+                    tf.transpose(mu, perm=[1, 0, 2]),
+                    tf.transpose(sigma, perm=[1, 0, 2]))
 
         else:
+            rnn_hidden = hidden_fwd
             if self.backward:
-                hidden_cmb = 1./3. * tf.tanh(
-                        self.linear_transition(yslice) + hidden_fwd + hidden_bck)
-            else:
-                hidden_cmb = 1./2. * tf.tanh(
-                        self.linear_transition(yslice) + hidden_bck)
- 
-            mu = self.linear_mu_fwd.operator(hidden_cmb)
-            sigma = tf.nn.softplus(self.linear_sg_fwd.operator(hidden_cmb))
+                rnn_hidden += hidden_bck
+            self.param_map[y] = rnn_hidden
 
-        self.dist_map[y] = StateSpaceNormalDiag(mu, sigma)
-        return self.dist_map[y]
+        return self.param_map[y]
 
-    def log_prob(x, y):
+    def log_prob(self, x, y):
         """Log prob of samples given observations."""
-        dist = self.get_dist(y)
-        return dist.log_prob(x)
+        if x in self.log_prob_map:
+            return self.log_prob_map[x]
+        else:
+            raise NotImplemented("General density function is not implemented yet.")
 
-    def sample(n_samples, y):
+    def sample(self, n_samples, y):
         """Samples from the inference model given observation."""
-        dist = self.get_dist(y)
-        return dist.sample(n_samples)
-          
+        params = self.get_param(y)
+        if self.mean_field:
+            mu, sigma = params
+            dist = StateSpaceNormalDiag(mu, sigma)
+            result = dist.sample(n_samples)
+            self.log_prob_map[result] = dist.log_prob(result)
+            return result
+        else:
+            log_prob = 0.
+            dist_ = tf.contrib.distributions.MultivariateNormalDiag
+            hidden = params
+            normalizer = 1 / 2.
+            if self.backward:
+                normalizer = 1 / 3.
+            n_ex = y.shape[0].value
+            particles = [tf.zeros([n_samples, n_ex, self.state_dim], dtype=y.dtype)]
+            for time in range(self.time_steps):
+                h_comb = normalizer * (tf.tanh(
+                    self.linear_transition.operator(
+                        particles[time])) + hidden[time])
+                d = dist_(
+                        self.linear_mu_fwd.operator(h_comb),
+                        self.linear_sg_fwd.operator(h_comb))
+                particles.append(d.sample(1)[0])
+                log_prob += d.log_prob(particles[time + 1])
+            # First Particle is just zero vector and has to be discarded.
+            result = tf.concat(
+                    [tf.expand_dims(p, axis=2) for p in particles[1:]], axis=2)
+            # Store the computed log probability of samples.
+            self.log_prob_map[result] = log_prob
+            return result
+
+    def get_regularizer(self):
+        """Get regularization for all NN functions in the inference network."""
+        return 0.
