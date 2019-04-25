@@ -350,11 +350,12 @@ class LSTMcell(Transform):
         self.w = {}
         self.u = {}
         self.b = {}
-        for offset, node in enumerate(['f', 'i', 'o', 'c']):
-            idxs += offset
+        tot_dim = self.in_dim + self.out_dim + 1
+        for node in ['f', 'i', 'o', 'c']:
             self.w[node] = self.var[idxs[0]:idxs[1]]
             self.u[node] = self.var[idxs[1]:idxs[2]]
             self.b[node] = self.var[idxs[2]:idxs[3]]
+            idxs += tot_dim
 
     def initializer(self):
         """Overriden function to do Xavier initialization."""
@@ -401,12 +402,18 @@ class LSTMcell(Transform):
                     [tf.expand_dims(h, axis=0) for h in output_h[1:]], axis=0)
 
         self.check_input_shape(x)
-        lin_comb = {}
+        comb = {}
         for node in ['f', 'i', 'o', 'c']:
-            lin_comb[node] = tf.sigmoid(
-                    tf.matmul(x, self.w['f']) + tf.matmul(h, self.u['f']) + self.b['f'])
-        c_star = lin_comb['f'] * c + lin_comb['i'] * tf.tanh(lin_comb['c'])
-        h_star = lin_comb['o'] * tf.tanh(c_star)
+            comb[node] = tf.matmul(
+                    x,
+                    self.w[node]) + tf.matmul(h, self.u[node]) + self.b[node]
+            if node == 'c':
+                comb[node] = tf.tanh(comb[node])
+            else:
+                comb[node] = tf.sigmoid(comb[node])
+
+        c_star = comb['f'] * c + comb['i'] * comb['c']
+        h_star = comb['o'] * tf.tanh(c_star)
         return h_star, c_star
 
 
