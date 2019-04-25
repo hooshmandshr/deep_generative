@@ -5,7 +5,7 @@ import scipy.stats
 import tensorflow as tf
 
 from distribution import *
-from utils.test_block_matrix import dense_matrix
+from test_block_matrix import dense_matrix
 
 
 def positive_definite_matrix(shape):
@@ -44,13 +44,13 @@ def test_block_diagonal_normal():
         with tf.Session() as sess:
             samples = sess.run(samples_tensor)
             entropy = sess.run(entropy_tensor)
-    print "Checking correctness of entropy computation."
+    print("Checking correctness of entropy computation.")
     cov = np.linalg.inv(dense_inv_cov)
     assert np.allclose(
             scipy.stats.multivariate_normal(loc_, cov).entropy(),
             entropy), "Correctness of entorpy."
 
-    print "Checking the shape of samples"
+    print("Checking the shape of samples")
     assert samples.shape == (n_ex, time * dim), "Shape of samples."
 
 def test_multiplicative_normal():
@@ -91,7 +91,7 @@ def test_multiplicative_normal():
             tf_mu = sess.run(loc)
             entropy_result = sess.run(entropy)
 
-    print "Checking correctness of mean and covariance computaiotn."
+    print("Checking correctness of mean and covariance computaiotn.")
     dense_tf_sigma = dense_matrix(tf_sigma[0], tf_sigma[1], tridiagonal=True)
     assert np.allclose(dense_tf_sigma, cov_inv), "Sigma inverse Incorrect."
     assert np.allclose(mu.ravel(), tf_mu.ravel()), "Mu computation incorrect."
@@ -99,7 +99,7 @@ def test_multiplicative_normal():
             scipy.stats.multivariate_normal(m.ravel(), cov).entropy(),
             entropy_result), "Entropy of Gaussian incorrect."
 
-    print "Cheking broadcasting samples with multiple distribution parameters."
+    print("Cheking broadcasting samples with multiple distribution parameters.")
     n_dist, n_samples = 5, 10
     # Number of samples.
     q1 = positive_definite_matrix([n_dist, dim, dim])

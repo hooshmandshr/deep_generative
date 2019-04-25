@@ -40,10 +40,10 @@ def test_reparam_gaussian_full_covar():
             tf_cov = sess.run([cov_2])
 
     expected_shape = (n_sample, tot_dist, out_dim)
-    print "Testing the shape of the samples."
+    print("Testing the shape of the samples.")
     for i in range(2):
         assert tf_res[i].shape == expected_shape, "sample shape not correct."
-    print "Testing that the covariance of the distributions are all the same."
+    print("Testing that the covariance of the distributions are all the same.")
     assert np.allclose(tf_cov[0][0], tf_cov[0][1])
 
 
@@ -71,7 +71,7 @@ def test_state_space_normal_diag():
             tf_res = sess.run(s_1)
 
     expected_shape = (n_sample, tot_dist, time, out_dim)
-    print "Testing the shape of the StateSpaceNormalDiag samples."
+    print("Testing the shape of the StateSpaceNormalDiag samples.")
     assert tf_res.shape == expected_shape, "sample shape not correct."
 
 

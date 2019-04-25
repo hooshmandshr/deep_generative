@@ -55,7 +55,7 @@ def test_planar_flow():
 
     output, output_det_jacobian = run_tf_flow(input_, dim=dim)
 
-    print "Single flow transformation."
+    print("Single flow transformation.")
     assert output.shape == (n_example, dim), 'Testing output shape.'
     assert output_det_jacobian.shape == (n_example,), 'Testing log det jacobian.'
 
@@ -64,7 +64,7 @@ def test_planar_flow():
 
     output, output_det_jacobian = run_tf_flow(input_, dim=dim)
 
-    print "Multiple flow transformation." 
+    print("Multiple flow transformation.")
     assert output.shape == (n_example, dim), 'Testing output shape.'
     assert output_det_jacobian.shape == (n_example,), 'Testing log det jacobian.'
 
@@ -74,13 +74,13 @@ def test_planar_flow():
     output, output_det_jacobian = run_tf_flow(
             input_, dim=dim, gov_param=params)
     # Make sure the shapes are consistent.
-    print "Multiple flow transformation correct computation, set parameters."
+    print("Multiple flow transformation correct computation, set parameters.")
     assert np.allclose(output, planar_flow(params, input_))
 
     output, output_det_jacobian = run_tf_flow(
             input_, dim=dim, init_val=params)
     # Make sure the shapes are consistent.
-    print "Multiple flow transformation result check, initial values."
+    print("Multiple flow transformation result check, initial values.")
     assert np.allclose(output, planar_flow(params, input_))
 
 
@@ -116,7 +116,7 @@ def test_autoregressive_flow():
 
     output, output_det_jacobian = run_tf_flow(input_, dim=dim)
 
-    print "Single auto-regressive flow transformation."
+    print("Single auto-regressive flow transformation.")
     assert output.shape == (n_example, time, space_dim), 'Testing output shape.'
     assert output_det_jacobian.shape == (n_example,), 'Testing log det jacobian.'
 
@@ -127,7 +127,7 @@ def test_autoregressive_flow():
     output, output_det_jacobian = run_tf_flow(
             input_, dim=dim)
 
-    print "Multiple auto-regressive flow transformation with given parameters." 
+    print("Multiple auto-regressive flow transformation with given parameters.")
     assert output.shape == (n_example, time, space_dim), 'Testing output shape.'
     assert output_det_jacobian.shape == (n_example,), 'Testing log det jacobian.'
 
@@ -136,7 +136,7 @@ def test_autoregressive_flow():
     output, output_det_jacobian = run_tf_flow(
             input_, dim=dim, gov_param=param)
 
-    print "Multiple auto-regressive flow transformation." 
+    print("Multiple auto-regressive flow transformation.")
     assert output.shape == (n_example, time, space_dim), 'Testing output shape.'
     assert output_det_jacobian.shape == (n_example,), 'Testing log det jacobian.'
 
@@ -145,7 +145,7 @@ def test_autoregressive_flow():
     output, output_det_jacobian = run_tf_flow(
             input_, dim=dim, gov_param=param, backward=True)
 
-    print "Multiple auto-regressive flow transformation with backward pass."
+    print("Multiple auto-regressive flow transformation with backward pass.")
     assert output.shape == (n_example, time, space_dim), 'Testing output shape.'
     assert output_det_jacobian.shape == (n_example,), 'Testing log det jacobian.'
 

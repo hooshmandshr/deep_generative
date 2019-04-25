@@ -55,11 +55,23 @@ class NormalizingFlowModel(Model):
         # Get in and out dimensionalities from the base model.
         if isinstance(base_model, Model):
             # Check to make sure the input dim of base model is the same.
-            if not base_model.in_dim == in_dim:
+            #TODO implement a correct fix to deal with shape mismatch from
+            # base model and the norm flow transformation.
+            if False and not base_model.in_dim == in_dim:
                 raise ValueError(
                         "in_dim {} and base_model.in_dim {} don't match".format(
                             in_dim, base_model.in_dim))
             out_dim = base_model.out_dim
+            try:
+                sample_shape = tf.squeeze(base_model.sample(1)).shape
+            except:
+                sample_shape = base_model.out_dim
+            if len(sample_shape) < 2:
+                out_dim = sample_shape[0].value
+            else:
+                if not isinstance(out_dim, tuple):
+                    out_dim = tuple(sample_shape.as_list())
+
         elif isinstance(base_model, tf.distributions.Distribution):
             # Base model is a tensorflow.Distribution sub-class
             sample_shape = tf.squeeze(base_model.sample(1)).shape
@@ -95,6 +107,8 @@ class NormalizingFlowModel(Model):
         self.norm_flow = None
         self.norm_flow_params = norm_flow_params
         self.transform_params = transform_params
+        # conditioner transformation
+        self.conditioner = None
 
     def get_normalizing_flow(self, y):
         """Gets the normalizing flow for conditional variable y.
@@ -133,24 +147,25 @@ class NormalizingFlowModel(Model):
             if self.norm_flow_type is TimeAutoRegressivePlanarFlow:
                 # the case of auto-regressive flow of has a specific treatment
                 # of input mapping to parameters of the flow.
-                trans_out_dim = param_shape[0] * param_shape[2] * param_shape[4]
+                trans_out_dim = param_shape[0] * param_shape[1] * param_shape[3] * param_shape[5]
                 # TODO: Check whether the input dimension is correct which is
                 # (# examples, # time steps, space dimensionality)
                 time, space_dim = self.in_dim
                 # Two consecutive times
-                trans_in_dim = space_dim * 2 
-                transform = self.transform_type(
-                        in_dim=trans_in_dim, out_dim=trans_out_dim,
-                        **self.transform_params)
+                trans_in_dim = space_dim * 2
+                if self.conditioner is None:
+                    self.conditioner = self.transform_type(
+                            in_dim=trans_in_dim, out_dim=trans_out_dim,
+                            **self.transform_params)
                 # reshape input into consecutive time points
                 # turn y shape into time_consecutive tensor
-                gov_params = transform.operator(
+                gov_params = self.conditioner.operator(
                         tf.concat([y[:, :-1], y[:, 1:]], axis=-1))
                 gov_params = tf.reshape(
                         gov_params,
-                        (num_flow, param_shape[1]) + param_shape[:1] + param_shape[2:])
+                        (num_flow, param_shape[2]) + param_shape[:2] + param_shape[3:])
                 gov_params = tf.transpose(
-                        gov_params, perm=[0, 2, 1, 3, 4, 5])
+                        gov_params, perm=[0, 2, 3, 1, 4, 5, 6])
                 # Construct each flow
                 flows = []
                 for i in range(num_flow):
@@ -166,10 +181,11 @@ class NormalizingFlowModel(Model):
             for dim in param_shape:
                 trans_out_dim *= dim
 
-            transform = self.transform_type(
-                    in_dim=self.in_dim, out_dim=trans_out_dim,
-                    **self.transform_params)
-            flow_params = transform.operator(y)
+            if self.conditioner is None:
+                self.conditioner = self.transform_type(
+                        in_dim=self.in_dim, out_dim=trans_out_dim,
+                        **self.transform_params)
+            flow_params = self.conditioner.operator(y)
             # List of flows for inputs respective to the input y.
             flows = []
             for i in range(num_flow):
@@ -204,8 +220,26 @@ class NormalizingFlowModel(Model):
 
         if isinstance(self.base_model, Model):
             # Get sample and log prob according to the design of model.
-            samples_not = self.base_model.sample(n_samples=n_samples, y=y)
-            log_prob = self.base_model.log_prob(x=samples_not, y=y)
+            # TODO: this is a hackey way, don't use try/except.
+            sample_size = n_samples
+            if num_flows > 0:
+                sample_size *= num_flows
+            samples_not = None
+            log_prob = None
+            if self.base_model.in_dim == 0:
+                samples_not = self.base_model.sample(n_samples=n_samples)
+                log_prob = self.base_model.log_prob(x=samples_not)
+            else:
+                samples_not = self.base_model.sample(n_samples=n_samples, y=y)
+                log_prob = self.base_model.log_prob(x=samples_not, y=y)
+
+            if self.base_model.in_dim == 0 and num_flows > 0:
+                shape_l = samples_not.shape.as_list()
+                samples_not = tf.reshape(samples_not,
+                        shape_l[:1] + [num_flows] + shape_l[1:])
+                shape_l = log_prob.shape.as_list()
+                log_prob = tf.reshape(log_prob,
+                        shape_l[:1] + [num_flows] + shape_l[1:])
 
         else:
             # The base model is tf.distributions.Distribution
@@ -233,4 +267,13 @@ class NormalizingFlowModel(Model):
             log_prob_ = tf.concat(log_p_list, axis=1)
 
         return samples, log_prob
+
+    def get_regularizer(self):
+        """Returns a regularization for the model if it exists."""
+        base_regul = 0.
+        try:
+            base_regul += self.base_model.get_regularization()
+        except:
+            pass
+        return base_regul + self.conditioner.get_regularizer()
 

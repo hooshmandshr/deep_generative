@@ -2,7 +2,7 @@
 import numpy as np
 import tensorflow as tf
 
-import block_matrix as bm
+import utils.block_matrix as bm
 
 
 def dense_matrix(diag, offdiag=None, tridiagonal=False): 
@@ -48,7 +48,7 @@ def test_get_diag():
         with tf.Session() as sess:
             tf_res = sess.run(diag_part)
     expected_diag = np.diag(dense_matrix(diag)).reshape(time, dim)
-    print "Testing diagonal part of the matrix."
+    print("Testing diagonal part of the matrix.")
     assert np.allclose(expected_diag, tf_res), "Get diagonal part"
 
 def test_diag_inverse():
@@ -64,7 +64,7 @@ def test_diag_inverse():
             tf_res = sess.run(inv)
     dense_inverse = np.linalg.inv(dense_matrix(diag))
     dense_result = dense_matrix(tf_res)
-    print "Testing inverse computation."
+    print("Testing inverse computation.")
     assert np.allclose(dense_inverse, dense_result), 'Inverse computatoin'
 
 def test_cholesky():
@@ -97,20 +97,20 @@ def test_cholesky():
     dense_cholesky = np.linalg.cholesky(
             dense_matrix(diag, offdiag, tridiagonal=True))
     dense_result = dense_matrix(chl_res_diag, chl_res_offdiag)
-    print "Testing cholesky factor computation."
+    print("Testing cholesky factor computation.")
     assert np.allclose(dense_cholesky, dense_result), 'Choesky computatoin'
 
     # Solve choleskey system given b. In other words, compute the inverse
     # cholesky multplied by b.
     dense_solve_cholesky = np.matmul(np.linalg.inv(dense_cholesky), b.T)
-    print "Testing cholesky inverse."
+    print("Testing cholesky inverse.")
     assert np.allclose(dense_solve_cholesky.T, solve_res), 'Cholesky inverse'
 
 
     # Solve choleskey system given b if the matrix is transposed. In otherwords
     # we want the result of A^{-T}b.
     dense_solve_cholesky = np.matmul(np.linalg.inv(dense_cholesky).T, b.T)
-    print "Testing cholesky transpose inverse."
+    print("Testing cholesky transpose inverse.")
     assert np.allclose(dense_solve_cholesky.T, solve_t_res), 'Cholesky transpose inverse'
 
 def test_cholesky_broadcast():
@@ -153,7 +153,7 @@ def test_cholesky_broadcast():
         dense_cholesky[i] = np.linalg.cholesky(
                 dense_matrix(diag[i], offdiag[i], tridiagonal=True))
         dense_result[i] = dense_matrix(chl_res_diag[i], chl_res_offdiag[i])
-    print "Testing cholesky factor computation broadcast."
+    print("Testing cholesky factor computation broadcast.")
     assert np.allclose(dense_cholesky, dense_result), 'Choesky computatoin broadcast'
 
     # Solve choleskey system given b. In other words, compute the inverse
@@ -162,7 +162,7 @@ def test_cholesky_broadcast():
     for i in range(num_mat):
         dense_solve_cholesky[i] = np.matmul(
                 np.linalg.inv(dense_cholesky[i]), b[i].T)
-    print "Testing cholesky inverse broadcast."
+    print("Testing cholesky inverse broadcast.")
     assert np.allclose(
             dense_solve_cholesky.transpose([0, 2, 1]),
             solve_res), 'Cholesky inverse broadcast'
@@ -175,7 +175,7 @@ def test_cholesky_broadcast():
     for i in range(num_mat):
         dense_solve_cholesky[i] = np.matmul(np.linalg.inv(dense_cholesky[i]).T, b[i].T)
  
-    print "Testing cholesky transpose inverse broadcast."
+    print("Testing cholesky transpose inverse broadcast.")
     assert np.allclose(
             dense_solve_cholesky.transpose([0, 2, 1]),
             solve_t_res), 'Cholesky transpose inverse broadcast'
