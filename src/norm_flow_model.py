@@ -94,7 +94,7 @@ class NormalizingFlowModel(Model):
 
         if in_dim == 0:
             assert transform_type is None
-        if in_dim > 0:
+        else:
             # The model is conditional and therefore a transformation
             # is needed.
             assert issubclass(transform_type, Transform)
