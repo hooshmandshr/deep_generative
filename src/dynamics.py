@@ -292,6 +292,11 @@ class MarkovLatentDynamics(MarkovDynamics):
                 init_model=self.init_model, transition_model=self.transition_model,
                 time_steps=self.time_steps, order=self.order)
 
+    def get_regularizer(self):
+        """Regularizer for the dynamical system."""
+        regul = self.transition_model.get_regularizer()
+        regul += self.emission_model.get_regularizer()
+        return regul
 
 class LatentLinearDynamicalSystem(MarkovLatentDynamics):
     """Class for implementation of Kalman-Filter generative model."""
@@ -464,7 +469,7 @@ class MLPDynamics(MarkovLatentDynamics):
     """Class for implementation of ffDS/pffDS generative model."""
 
     def __init__(self, lat_dim, obs_dim, time_steps, transition_layers,
-            emission_transform, poisson=False,
+            emission_transform, poisson=False, residual=False,
             full_covariance=False, **kwargs):
         """Sets up the parameters of the Kalman filter sets up super class.
 
@@ -478,6 +483,8 @@ class MLPDynamics(MarkovLatentDynamics):
         poisson: bool
             True if observation is count data. Otherwise, observation is
             continuous.
+        residual: bool
+            If True MLP transition function is of residual form.
         full_covariance: bool
             Covariance matrices of noise processes are full if True. otherwise,
             diagonal covariance.
@@ -500,7 +507,7 @@ class MLPDynamics(MarkovLatentDynamics):
                 out_dim=lat_dim, in_dim=lat_dim,
                 transform=MLP,
                 distribution=dist, reparam_scale=False,
-                hidden_units=transition_layers)
+                hidden_units=transition_layers, residual=residual)
         # Emission model is reparameterized Gaussian with linear
         # transformation.
         emission_model = ReparameterizedDistribution(

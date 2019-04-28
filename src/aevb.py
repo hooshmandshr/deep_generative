@@ -4,9 +4,10 @@ import numpy as np
 import tensorflow as tf
 from tqdm import tqdm
 
-from distribution import MultiplicativeNormal
-from dynamics import FLDS
+from distribution import MultiplicativeNormal, StateSpaceNormalDiag
+from dynamics import FLDS, DeepKalmanFilter, DeepKalmanDynamics, MLPDynamics
 from model import Model, ReparameterizedDistribution
+from norm_flow import TimeAutoRegressivePlanarFlow
 from norm_flow_model import NormalizingFlowModel
 from transform import MultiLayerPerceptron as MLP
 
@@ -232,7 +233,7 @@ class AutoEncodingVariationalBayes(object):
 
 
 class FLDSVB(AutoEncodingVariationalBayes):
-    """Class for FLDS learning model."""
+    """Class for FLDS Auto-Encoding Variational Bayes."""
 
     def __init__(self, data, lat_dim, nonlinear_transform, poisson=False,
             optimizer=None, n_monte_carlo_samples=1, batch_size=1,
@@ -296,3 +297,120 @@ class FLDSVB(AutoEncodingVariationalBayes):
                 n_monte_carlo_samples=n_monte_carlo_samples,
                 batch_size=batch_size, optimizer=optimizer)
 
+
+class DeepKalmanVB(AutoEncodingVariationalBayes):
+    """Class for Deep Kalman Filter Auto-Encoding Variational Bayes."""
+
+    def __init__(self, data, lat_dim, transition_hidden_dim,
+            emission_layers, recon_hidden_dim,
+            mean_field=False, backward=True,
+            optimizer=None, n_monte_carlo_samples=1, batch_size=1):
+        """
+        params:
+        -------
+        data: numpy.ndarray
+            Shape of input is assumed to be (N, ...) where first dimensions
+            corresponds to each example and the rest is the shape of each input
+        lat_dim: int
+        transition_hidden_dim: int
+            Dimensionality of the hidden unit of the gated transition transform
+            in the generative model.
+        emission_layers: list of int
+            Hidden layers of the MLP emission transform.
+        recon_hidden_dim: int
+            Dimensionality of the hidden state of the RNNs in the recognition
+            model.
+        mean_field: bool
+        backward: bool
+        optimizer: tf.train.Optimizer
+            If None, by default AdamOptimizer with learning rate 0.001 will be
+            used.
+        n_monte_carlo_smaples: int
+            Number of monte-carlo examples to be used for estimation of ELBO.
+        batch_size: int
+            Batch size for stochastic estimation of ELBO.
+        """
+        self.lat_dim = lat_dim
+        _, self.time, self.obs_dim = data.shape
+        self.gen_hid_dim = transition_hidden_dim
+        self.rec_hid_dim = recon_hidden_dim
+
+        gen_model = DeepKalmanDynamics(
+            lat_dim=self.lat_dim, obs_dim=self.obs_dim, time_steps=self.time,
+            transition_units=self.gen_hid_dim, emission_layers=emission_layers)
+
+        recon_model = DeepKalmanFilter(
+            in_dim=self.obs_dim, out_dim=self.lat_dim, time_steps=self.time,
+            rnn_hdim=self.rec_hid_dim, mean_field=mean_field, backward=backward)
+
+        super(DeepKalmanVB, self).__init__(
+                data=data, generative_model=gen_model,
+                recognition_model=recon_model,
+                n_monte_carlo_samples=n_monte_carlo_samples,
+                batch_size=batch_size, optimizer=optimizer)
+
+
+class FilteringNormalizingFlowVB(AutoEncodingVariationalBayes):
+    """Class for Filtering Normalizing Flow Auto-Encoding Variational Bayes."""
+
+    def __init__(self, data, lat_dim, transition_layers, emission_layers,
+            recognition_layers, n_flow_layers, residual=False, backward=False,
+            poisson=False,
+            optimizer=None, n_monte_carlo_samples=1, batch_size=1,
+            full_covariance=True, shared_params=True, **kwargs):
+        """
+        params:
+        -------
+        data: numpy.ndarray
+            Shape of input is assumed to be (N, ...) where first dimensions
+            corresponds to each example and the rest is the shape of each input
+        transition_layers: list of int
+        emission_layers: list of int
+        recognition_layers: list of int
+        n_flow_layers: int
+        residual: bool
+        backward: bool
+        poisson: bool
+            If False, the model is Gaussian. Otherwise, the emission model is
+            Poisson.
+        optimizer: tf.train.Optimizer
+            If None, by default AdamOptimizer with learning rate 0.001 will be
+            used.
+        n_monte_carlo_smaples: int
+            Number of monte-carlo examples to be used for estimation of ELBO.
+        batch_size: int
+            Batch size for stochastic estimation of ELBO.
+        **kwargs:
+            Arguments for neural network function corresponding to the
+            generative function.
+        """
+        self.lat_dim = lat_dim
+        _, self.time, self.obs_dim = data.shape
+        self.poisson = poisson
+
+        gen_model = MLPDynamics(
+            lat_dim=self.lat_dim, obs_dim=self.obs_dim, time_steps=self.time,
+            transition_layers=transition_layers,
+            residual=residual, poisson=self.poisson,
+            full_covariance=full_covariance, emission_transform=MLP,
+            hidden_units=emission_layers)
+
+        #TODO: have a single recognition network for MF params and NF params.
+
+        base_model = ReparameterizedDistribution(
+            out_dim=(self.time, self.lat_dim), in_dim=(self.time, self.obs_dim),
+            distribution=StateSpaceNormalDiag, transform=MLP,
+            reparam_scale=True, hidden_units=recognition_layers)
+
+        recon_model = NormalizingFlowModel(
+            in_dim=(self.time, self.obs_dim), base_model=base_model,
+            norm_flow_type=TimeAutoRegressivePlanarFlow,
+            norm_flow_params={"num_layer": n_flow_layers, "backward": backward},
+            transform_type=MLP,
+            transform_params={"hidden_units": recognition_layers})
+
+        super(FilteringNormalizingFlowVB, self).__init__(
+                data=data, generative_model=gen_model,
+                recognition_model=recon_model,
+                n_monte_carlo_samples=n_monte_carlo_samples,
+                batch_size=batch_size, optimizer=optimizer)
