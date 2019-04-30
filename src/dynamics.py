@@ -332,8 +332,10 @@ class LatentLinearDynamicalSystem(MarkovLatentDynamics):
 
         # Transition matrix for the linear function.
         if init_transition_matrix_bias is None:
-            self.transition_matrix = tf.Variable(
-                    np.random.normal(0, 1, [(lat_dim * order) + 1, lat_dim]))
+            init_ = np.concatenate([np.eye(lat_dim) for i in range(order)],
+                    axis=0)
+            init_ = np.concatenate([init_, np.zeros([1, lat_dim])])
+            self.transition_matrix = tf.Variable(init_)
         else:
             self.transition_matrix = tf.Variable(init_transition_matrix_bias)
         prior = dist(mean_0, cov_0)

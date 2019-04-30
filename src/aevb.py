@@ -270,8 +270,6 @@ class FLDSVB(AutoEncodingVariationalBayes):
         self.poisson = poisson
         gen_model = FLDS(
                 lat_dim=lat_dim, obs_dim=self.obs_dim, time_steps=self.time,
-                init_transition_matrix_bias=np.append(
-                    np.eye(self.lat_dim), np.zeros([1, self.lat_dim]), axis=0),
                 full_covariance=full_covariance,
                 poisson=self.poisson,
                 nonlinear_transform=nonlinear_transform, **kwargs)
@@ -357,7 +355,7 @@ class FilteringNormalizingFlowVB(AutoEncodingVariationalBayes):
             recognition_layers, n_flow_layers, residual=False, backward=False,
             poisson=False,
             optimizer=None, n_monte_carlo_samples=1, batch_size=1,
-            full_covariance=True, shared_params=True, **kwargs):
+            full_covariance=True, order=1):
         """
         params:
         -------
@@ -366,6 +364,7 @@ class FilteringNormalizingFlowVB(AutoEncodingVariationalBayes):
             corresponds to each example and the rest is the shape of each input
         transition_layers: list of int
         emission_layers: list of int
+            If [], the transition is linear.
         recognition_layers: list of int
         n_flow_layers: int
         residual: bool
@@ -380,20 +379,26 @@ class FilteringNormalizingFlowVB(AutoEncodingVariationalBayes):
             Number of monte-carlo examples to be used for estimation of ELBO.
         batch_size: int
             Batch size for stochastic estimation of ELBO.
-        **kwargs:
-            Arguments for neural network function corresponding to the
-            generative function.
         """
         self.lat_dim = lat_dim
         _, self.time, self.obs_dim = data.shape
         self.poisson = poisson
 
-        gen_model = MLPDynamics(
-            lat_dim=self.lat_dim, obs_dim=self.obs_dim, time_steps=self.time,
-            transition_layers=transition_layers,
-            residual=residual, poisson=self.poisson,
-            full_covariance=full_covariance, emission_transform=MLP,
-            hidden_units=emission_layers)
+        gen_model = None
+        if len(transition_layers) == 0:
+            # Linear model.
+            gen_model = FLDS(
+                    lat_dim=lat_dim, obs_dim=self.obs_dim,
+                    time_steps=self.time, full_covariance=full_covariance,
+                    order=order, poisson=self.poisson,
+                    nonlinear_transform=MLP, hidden_units=emission_layers)
+        else:
+            gen_model = MLPDynamics(
+                    lat_dim=self.lat_dim, obs_dim=self.obs_dim,
+                    time_steps=self.time, transition_layers=transition_layers,
+                    residual=residual, poisson=self.poisson,
+                    full_covariance=full_covariance, emission_transform=MLP,
+                    hidden_units=emission_layers)
 
         #TODO: have a single recognition network for MF params and NF params.
 
