@@ -596,3 +596,141 @@ class AffineFlow(NormalizingFlow):
         dim = kwargs["dim"]
         n_comp = kwargs["n_comp"]
         return (n_comp, dim + 1, dim)
+
+
+class KalmanFlow(NormalizingFlow):
+
+    def __init__(self, dim, non_linearity=tf.tanh, gov_param=None,
+            initial_value=None, enforce_inverse=True, lower=True, name=None):
+        """Sets up the universal properties of any transformation function.
+
+        Governing parameters of the transformation is set in the constructor.
+
+        params:
+        -------
+        dim: int
+            dimensionality of the input code/variable and output variable.
+        gov_param: tf.Tensor
+            In case that parameters of the transformation are governed by
+            another tensor.
+        initial_value: numpy.ndarray
+            Initial value of the transformation variable.
+        enforce_inverse: bool
+            If true, the parameters are changed slightly to guarantee
+            invertibility.
+        lower: bool
+            If True the a_matrix is lower triangular, otherwise it will be
+            upper triangular.
+        """
+        super(KalmanFlow, self).__init__(dim=dim, gov_param=gov_param,
+                initial_value=initial_value, name=name)
+        # Set the rest of the attributes.
+        nl = non_linearity
+        if not(nl is tf.tanh or nl is tf.nn.sigmoid or nl is tf.nn.softplus):
+            raise NotImplemented(
+                    "Only {}, {}, {} non-linearities are compatible.".format(
+                        "tf.tanh", "tf.nn.sigmoid", "tf.nn.softplus"))
+
+        self.non_linearity = non_linearity
+        # Make sure the shape of the parameters is correct.
+        self.param_shape = KalmanFlow.get_param_shape(dim=dim)
+        self.check_param_shape()
+
+        # Partition the variable into variables of the planar flow.
+        self.lower = lower
+        self.a_matrix = self.var[:dim]
+        self.bias = self.var[dim:dim+1]
+        # Scale must be > -1 for the log-det-jac to be defined
+        self.scale = tf.nn.softplus(self.var[dim+1:]) - 1.
+
+        if enforce_inverse:
+            self.enforce_invertiblity()
+
+        # Tensor map for keeping track of computation redundancy.
+        # If an operation on a tensor has been done before, do not redo it.
+        self.tensor_map = {}
+
+    def enforce_invertiblity(self):
+        """Guarantee that affine flow does not have 0 determinant Jacobian."""
+        if self.lower:
+            self.a_matrix = tf.matrix_band_part(self.a_matrix, 1, 0)
+        else:
+            self.a_matrix = tf.matrix_band_part(self.a_matrix, 0, 1)
+
+        # Ensure that the diagonal elements of the matrix are all
+        # bigger that -1/N where N is total parallel affine transformations
+
+        diag_part = tf.matrix_diag_part(self.a_matrix)
+        self.a_matrix += - tf.matrix_diag(diag_part) + tf.matrix_diag(
+                tf.nn.softplus(diag_part))
+
+    def non_linearity_derivative(self, x):
+        """Operation for the derivative of the non linearity function."""
+        if self.non_linearity is tf.tanh:
+            return 1. - tf.square(tf.tanh(x))
+        elif self.non_linearity is tf.nn.sigmoid:
+            return (1. - tf.square(tf.tanh(x))) / 2.
+        elif self.non_linearity is tf.nn.softplus:
+            return tf.nn.sigmoid(x)
+
+    def matmul(self, x):
+        """Computes the inner product part of the transformation."""
+        if x in self.tensor_map:
+            return self.tensor_map[x]
+        result = tf.transpose(tf.linalg.solve(
+                self.a_matrix, tf.transpose(x))) + self.bias
+        return result
+
+    def operator(self, x):
+        """Given x applies the Planar flow transformation to the input.
+
+        params:
+        -------
+        x: tf.Tensor
+            Input tensor for which the transformation is computed.
+
+        returns:
+        --------
+        tf.Tensor.
+        """
+        dial = self.matmul(x)
+        result = x + self.scale * self.non_linearity(dial)
+        return result
+
+    def log_det_jacobian(self, x):
+        """Computes log-det-Jacobian for combination of inputs, flows.
+
+        params:
+        -------
+        x: tensorflow.Tensor
+            Input tensor for which the log-det-jacobian is computed.
+
+        returns:
+        --------
+        tf.Tensor for log-det-jacobian of the transformation given x.
+        """
+        dial = self.non_linearity_derivative(self.matmul(x))
+
+        diag = tf.matrix_diag_part(self.a_matrix)
+        result = tf.reduce_sum(
+                tf.log(diag + dial * self.scale), axis=1) - tf.reduce_sum(
+                        tf.log(diag))
+        return result
+
+    def initializer(self):
+        """Default initializer of the transformation class."""
+
+        # Xaviar initializer unifrom for w parameter.
+        std = np.sqrt(2. / (2 * self.dim))
+        init_val = np.random.normal(0, std, self.param_shape)
+        # Bias initialization
+        init_val[-2, :] *= 0.
+        # Scale initilization
+        init_val[-1, :] += 1.
+        self.var = tf.Variable(init_val)
+
+    @staticmethod
+    def get_param_shape(**kwargs):
+        """Gets the shape of the governing parameters of the transform."""
+        dim = kwargs["dim"]
+        return (dim + 2, dim)
