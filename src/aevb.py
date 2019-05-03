@@ -235,18 +235,29 @@ class AutoEncodingVariationalBayes(object):
 class FLDSVB(AutoEncodingVariationalBayes):
     """Class for FLDS Auto-Encoding Variational Bayes."""
 
-    def __init__(self, data, lat_dim, nonlinear_transform, poisson=False,
-            optimizer=None, n_monte_carlo_samples=1, batch_size=1,
-            full_covariance=True, shared_params=True, **kwargs):
+    def __init__(self, data, lat_dim, emission_transform,
+            emission_transform_params, recognition_transform,
+            recognition_transform_params, poisson=False, optimizer=None,
+            n_monte_carlo_samples=1, batch_size=1, full_covariance=True,
+            shared_params=True):
         """
         params:
         -------
         data: numpy.ndarray
             Shape of input is assumed to be (N, ...) where first dimensions
             corresponds to each example and the rest is the shape of each input
-        nonlinear_transform: tf.Transform type
+        lat_dim: int
+            Dimensionality of the latent state space.
+        emission_transform: tf.Transform type
             Nonlinear transformation from latent space to parameters of the
             observation model.
+        emission_transform_params: dict
+            Arguments to be passed to the emission transform.
+        recognition_transform: tf.Transform type
+            Nonlinear transformation from observations to parameters of the
+            inference/recognition network.
+        recognition_transform_params: dict
+            Arguments to be passed to the recognition transform.
         poisson: bool
             If False, the model is Gaussian. Otherwise, the emission model is
             Poisson.
@@ -261,9 +272,6 @@ class FLDSVB(AutoEncodingVariationalBayes):
             If True, the recognition and generative models share parameters
             Q, Q1, A. Otherwise, the recognition model has it's own LDS
             parameters.
-        **kwargs:
-            Arguments for neural network function corresponding to the
-            generative function.
         """
         self.lat_dim = lat_dim
         _, self.time, self.obs_dim = data.shape
@@ -272,7 +280,8 @@ class FLDSVB(AutoEncodingVariationalBayes):
                 lat_dim=lat_dim, obs_dim=self.obs_dim, time_steps=self.time,
                 full_covariance=full_covariance,
                 poisson=self.poisson,
-                nonlinear_transform=nonlinear_transform, **kwargs)
+                nonlinear_transform=emission_transform,
+                **emission_transform_params)
 
         # (Q1, Q, A)
         lds_params = None
@@ -287,13 +296,61 @@ class FLDSVB(AutoEncodingVariationalBayes):
                 out_dim=(self.time, self.lat_dim),
                 distribution=MultiplicativeNormal,
                 mult_normal_vars=lds_params,
-                transform=MLP, hidden_units=[self.obs_dim * 2, self.obs_dim])
+                transform=recognition_transform,
+                **recognition_transform_params)
 
         super(FLDSVB, self).__init__(
                 data=data, generative_model=gen_model,
                 recognition_model=recon_model,
                 n_monte_carlo_samples=n_monte_carlo_samples,
                 batch_size=batch_size, optimizer=optimizer)
+
+
+class PFLDSVB(FLDSVB):
+    """Implements pflds class from count data."""
+
+    def __init__(self, data, lat_dim, hdim=60, optimizer=None,
+            n_monte_carlo_samples=1, batch_size=1, full_covariance=True,
+            shared_params=True):
+        """
+        params:
+        -------
+        data: numpy.ndarray
+            Shape of input is assumed to be (N, ...) where first dimensions
+            corresponds to each example and the rest is the shape of each input
+        lat_dim: int
+            Dimensionality of the latent state space.
+        hdim: int
+            Number of hidden units per layer of the MLP networks in the
+            generative model and inference model.
+        optimizer: tf.train.Optimizer
+            If None, by default AdamOptimizer with learning rate 0.001 will be
+            used.
+        n_monte_carlo_smaples: int
+            Number of monte-carlo examples to be used for estimation of ELBO.
+        batch_size: int
+            Batch size for stochastic estimation of ELBO.
+        shared_params: bool
+            If True, the recognition and generative models share parameters
+            Q, Q1, A. Otherwise, the recognition model has it's own LDS
+            parameters.
+        """
+
+        # Both generative models non-linearity and recognition networks models
+        # are MLP.
+        gen_mlp_params = {
+                "activation": tf.nn.tanh, "output_activation": tf.exp,
+                "hidden_units": [hdim, hdim]}
+        rec_mlp_params = {
+                "activation": tf.nn.tanh, "hidden_units": [hdim, hdim]}
+        super(PFLDSVB, self).__init__(
+                data=data, lat_dim=lat_dim,
+                emission_transform=MLP,
+                emission_transform_params=gen_mlp_params,
+                recognition_transform=MLP,
+                recognition_transform_params=rec_mlp_params, poisson=True,
+                optimizer=optimizer, n_monte_carlo_samples=1, batch_size=1,
+                full_covariance=full_covariance, shared_params=True)
 
 
 class DeepKalmanVB(AutoEncodingVariationalBayes):

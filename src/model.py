@@ -167,16 +167,16 @@ class ReparameterizedDistribution(Model):
         if self.dist_class is MultiplicativeNormal: 
             in_time, in_dim = self.in_dim
             time, out_dim = self.out_dim
-            # Parameters of the C matrix.
+            # Parameters of the C matrix and M matrix.
             self.transforms.append(self.transform_class(
                 in_dim=in_dim,
-                out_dim=out_dim * out_dim,
+                out_dim=out_dim * out_dim + out_dim,
                 **self.trans_args))
             # Parameters of the M matrix.
-            self.transforms.append(self.transform_class(
-                in_dim=in_dim,
-                out_dim=out_dim,
-                **self.trans_args))
+            # self.transforms.append(self.transform_class(
+            #    in_dim=in_dim,
+            #    out_dim=out_dim,
+            #    **self.trans_args))
         elif self.dist_class is StateSpaceNormalDiag:
             self.transforms.append(self.transform_class(
                 in_dim=self.in_dim[1], out_dim=self.out_dim[1],
@@ -281,7 +281,7 @@ class ReparameterizedDistribution(Model):
 
         # Multivariate Poisson (independent variables).
         elif self.dist_class is MultiPoisson:
-            rate_ = tf.nn.softplus(transforms[0].operator(y))
+            rate_ = transforms[0].operator(y)
             dist = self.dist_class(rate_)
 
         # Multivariate Bernoulli (independent variables).
@@ -331,7 +331,7 @@ class ReparameterizedDistribution(Model):
             var_shape = [1, out_dim, out_dim]
             if n_ex == 0:
                 var_shape = [out_dim, out_dim]
-            def get_cholesky_factor_variable(index=0):
+            def get_positive_definite_variable(index=0):
                 """Gets cholesky factor variable serving as SPD matrix."""
                 # Get a lower triangular variable
                 var = tf.linalg.band_part(tf.Variable(
@@ -342,8 +342,8 @@ class ReparameterizedDistribution(Model):
             if self.mult_normal_vars is None:
                 # Initialize the variables of the distribution.
                 # These variables are Q1, Q, A
-                q_init=get_cholesky_factor_variable()
-                q_matrix=get_cholesky_factor_variable()
+                q_init=get_positive_definite_variable()
+                q_matrix=get_positive_definite_variable()
                 # Shape of each parameter.
                 a_matrix = tf.Variable(
                         np.random.normal(0, 1, var_shape), dtype=dtype)
@@ -364,10 +364,20 @@ class ReparameterizedDistribution(Model):
                 a_matrix = tf.concat([a_matrix for i in range(n_ex)], axis=0)
 
             # c_matrix should be semi-positive definite
-            c_matrix = tf.linalg.band_part(tf.reshape(transforms[0].operator(y),
-                [-1, time, out_dim, out_dim]), -1, 0)
+            trans_out = transforms[0].operator(y)
+            shape_ = trans_out.shape.as_list()
+            dim_ = len(shape_)
+            slice_b = [0 for i in range(dim_ - 1)]
+            slice_e = [-1 for i in range(dim_ - 1)]
+            c_matrix = tf.slice(
+                    trans_out, slice_b + [0], slice_e + [out_dim * out_dim])
+            c_matrix = tf.linalg.band_part(
+                    tf.reshape(c_matrix, shape_[:-1] + [out_dim, out_dim]),
+                    -1, 0)
+            # Ensure that c_matrix is a positive-definite matrix.
             c_matrix = tf.matmul(c_matrix, c_matrix, transpose_b=True)
-            m_matrix = transforms[1].operator(y)
+            m_matrix = tf.slice(
+                    trans_out, slice_b + [out_dim * out_dim], slice_e + [-1])
 
             dist = MultiplicativeNormal(
                     q_init=q_init,
