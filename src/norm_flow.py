@@ -2,6 +2,7 @@ import numpy as np
 import tensorflow as tf
 
 from transform import Transform
+from utils.block_matrix import BlockBiDiagonalMatrix
 
 
 class NormalizingFlow(Transform):
@@ -600,7 +601,7 @@ class AffineFlow(NormalizingFlow):
 
 class KalmanFlow(NormalizingFlow):
 
-    def __init__(self, dim, non_linearity=tf.tanh, gov_param=None,
+    def __init__(self, time, dim, non_linearity=tf.tanh, gov_param=None,
             initial_value=None, enforce_inverse=True, lower=True, name=None):
         """Sets up the universal properties of any transformation function.
 
@@ -622,6 +623,7 @@ class KalmanFlow(NormalizingFlow):
             If True the a_matrix is lower triangular, otherwise it will be
             upper triangular.
         """
+        self.time = time
         super(KalmanFlow, self).__init__(dim=dim, gov_param=gov_param,
                 initial_value=initial_value, name=name)
         # Set the rest of the attributes.
@@ -633,19 +635,23 @@ class KalmanFlow(NormalizingFlow):
 
         self.non_linearity = non_linearity
         # Make sure the shape of the parameters is correct.
-        self.param_shape = KalmanFlow.get_param_shape(dim=dim)
+        self.param_shape = KalmanFlow.get_param_shape(time=time, dim=dim)
         self.check_param_shape()
 
         # Partition the variable into variables of the planar flow.
-        self.lower = lower
-        self.a_matrix = self.var[:dim]
-        self.bias = self.var[dim:dim+1]
-        # Scale must be > -1 for the log-det-jac to be defined
-        self.scale = tf.nn.softplus(self.var[dim+1:]) - 1.
 
+        self.lower = lower
+        self.diag_ = self.var[:time]
         if enforce_inverse:
             self.enforce_invertiblity()
-
+        offdiag_ = self.var[time:(2 * time - 1)]
+        self.a_matrix = BlockBiDiagonalMatrix(
+                diag_block=self.diag_, offdiag_block=offdiag_, lower=self.lower)
+        self.bias = tf.expand_dims(
+                self.var[(2 * time - 1):(3 * time - 1), :, 0], axis=0)
+        # Scale must be > -1 for the log-det-jac to be defined
+        self.scale = tf.expand_dims(tf.nn.softplus(
+                self.var[(3 * time - 1):(4 * time - 1), :, 0]) - 1., axis=0)
         # Tensor map for keeping track of computation redundancy.
         # If an operation on a tensor has been done before, do not redo it.
         self.tensor_map = {}
@@ -653,15 +659,13 @@ class KalmanFlow(NormalizingFlow):
     def enforce_invertiblity(self):
         """Guarantee that affine flow does not have 0 determinant Jacobian."""
         if self.lower:
-            self.a_matrix = tf.matrix_band_part(self.a_matrix, 1, 0)
-        else:
-            self.a_matrix = tf.matrix_band_part(self.a_matrix, 0, 1)
+            self.diag_ = tf.matrix_band_part(self.diag_, -1, 0)
 
         # Ensure that the diagonal elements of the matrix are all
         # bigger that -1/N where N is total parallel affine transformations
 
-        diag_part = tf.matrix_diag_part(self.a_matrix)
-        self.a_matrix += - tf.matrix_diag(diag_part) + tf.matrix_diag(
+        diag_part = tf.matrix_diag_part(self.diag_)
+        self.diag_ += - tf.matrix_diag(diag_part) + tf.matrix_diag(
                 tf.nn.softplus(diag_part))
 
     def non_linearity_derivative(self, x):
@@ -677,8 +681,7 @@ class KalmanFlow(NormalizingFlow):
         """Computes the inner product part of the transformation."""
         if x in self.tensor_map:
             return self.tensor_map[x]
-        result = tf.transpose(tf.linalg.solve(
-                self.a_matrix, tf.transpose(x))) + self.bias
+        result = self.a_matrix.solve(x) + self.bias
         return result
 
     def operator(self, x):
@@ -711,9 +714,9 @@ class KalmanFlow(NormalizingFlow):
         """
         dial = self.non_linearity_derivative(self.matmul(x))
 
-        diag = tf.matrix_diag_part(self.a_matrix)
-        result = tf.reduce_sum(
-                tf.log(diag + dial * self.scale), axis=1) - tf.reduce_sum(
+        diag = tf.expand_dims(tf.matrix_diag_part(self.diag_), axis=0)
+        result = tf.reduce_sum(tf.reduce_sum(
+                tf.log(diag + dial * self.scale), axis=1), axis=1) - tf.reduce_sum(
                         tf.log(diag))
         return result
 
@@ -721,16 +724,17 @@ class KalmanFlow(NormalizingFlow):
         """Default initializer of the transformation class."""
 
         # Xaviar initializer unifrom for w parameter.
-        std = np.sqrt(2. / (2 * self.dim))
+        std = np.sqrt(2. / (2 * self.time * self.dim))
         init_val = np.random.normal(0, std, self.param_shape)
         # Bias initialization
-        init_val[-2, :] *= 0.
+        init_val[(2 * self.time - 1):] *= 0.
         # Scale initilization
-        init_val[-1, :] += 1.
+        init_val[(3 * self.time - 1):] += 1.
         self.var = tf.Variable(init_val)
 
     @staticmethod
     def get_param_shape(**kwargs):
         """Gets the shape of the governing parameters of the transform."""
         dim = kwargs["dim"]
-        return (dim + 2, dim)
+        time = kwargs["time"]
+        return (4 * time - 1, dim, dim)
