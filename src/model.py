@@ -13,7 +13,6 @@ import tensorflow as tf
 from distribution import LogitNormalDiag, MultiPoisson, MultiplicativeNormal,\
         MultiBernoulli, StateSpaceNormalDiag
 from transform import GatedTransition
-
 FULL_GAUSSIAN = tf.contrib.distributions.MultivariateNormalTriL
 DIAG_GAUSSIAN = tf.contrib.distributions.MultivariateNormalDiag
 
@@ -61,6 +60,7 @@ class Model(object):
         """Returns a regularization for the model if it exists."""
         return 0.
 
+
 class ReparameterizedDistribution(Model):
     """Class that Implements reparameterized distributions p(x|y).
 
@@ -69,7 +69,7 @@ class ReparameterizedDistribution(Model):
     """
 
     def __init__(self, out_dim, in_dim, distribution, transform,
-            reparam_scale=True, mult_normal_vars=None, **kwargs):
+            reparam_scale=True, mult_normal_vars=None, extra_dim=0, **kwargs):
         """Initializes the model object and sets up necessary variables.
 
         params:
@@ -140,6 +140,9 @@ class ReparameterizedDistribution(Model):
             if not(in_dim[0] == out_dim[0]):
                 raise ValueError(
                         "First dimension of out_dim and in_dim should be the same for StateSpaceNormalDiag.")
+        # Extra outputs for the non-linear model.
+        self.extra_dim = extra_dim
+        self.extra_output = {}
 
     def get_transforms(self):
         """Initializes or gets the transformations necessary for reparam.
@@ -172,19 +175,12 @@ class ReparameterizedDistribution(Model):
                 in_dim=in_dim,
                 out_dim=out_dim * out_dim + out_dim,
                 **self.trans_args))
-            # Parameters of the M matrix.
-            # self.transforms.append(self.transform_class(
-            #    in_dim=in_dim,
-            #    out_dim=out_dim,
-            #    **self.trans_args))
         elif self.dist_class is StateSpaceNormalDiag:
+            # Scale and mean share the same network.
             self.transforms.append(self.transform_class(
-                in_dim=self.in_dim[1], out_dim=self.out_dim[1],
+                in_dim=self.in_dim[1],
+                out_dim=self.out_dim[1] * 2 + self.extra_dim,
                 **self.trans_args))
-            self.transforms.append(self.transform_class(
-                in_dim=self.in_dim[1], out_dim=self.out_dim[1],
-                **self.trans_args))
-
         else: 
             self.transforms.append(self.transform_class(
                 in_dim=self.in_dim, out_dim=self.out_dim,
@@ -270,13 +266,18 @@ class ReparameterizedDistribution(Model):
         elif self.dist_class is StateSpaceNormalDiag:
             # Rectify standard deviation so that it is a smooth
             # positive function
-            loc_ = transforms[0].operator(y)
+            trans_out = transforms[0].operator(y)
+            loc_ = trans_out[..., :self.out_dim[1]]
             scale_ = self.reparam_scale
             if self.reparam_scale is True:
-                scale_ = tf.nn.softplus(transforms[1].operator(y))
+                scale_ = trans_out[..., self.out_dim[1]:(2 * self.out_dim[1])]
+                scale_ = tf.nn.softplus(scale_)
             else:
                 raise NotImplemented(
                         "Use StateSpaceNormalDiag with reparam_scale=True")
+            if self.extra_dim > 0:
+                # remainder of the outputs.
+                self.extra_output[y] = trans_out[..., (2 * self.out_dim[1]):]
             dist = self.dist_class(loc=loc_, scale=scale_)
 
         # Multivariate Poisson (independent variables).
@@ -365,19 +366,13 @@ class ReparameterizedDistribution(Model):
 
             # c_matrix should be semi-positive definite
             trans_out = transforms[0].operator(y)
-            shape_ = trans_out.shape.as_list()
-            dim_ = len(shape_)
-            slice_b = [0 for i in range(dim_ - 1)]
-            slice_e = [-1 for i in range(dim_ - 1)]
-            c_matrix = tf.slice(
-                    trans_out, slice_b + [0], slice_e + [out_dim * out_dim])
+            c_matrix = trans_out[..., :(out_dim * out_dim)]
             c_matrix = tf.linalg.band_part(
                     tf.reshape(c_matrix, shape_[:-1] + [out_dim, out_dim]),
                     -1, 0)
             # Ensure that c_matrix is a positive-definite matrix.
             c_matrix = tf.matmul(c_matrix, c_matrix, transpose_b=True)
-            m_matrix = tf.slice(
-                    trans_out, slice_b + [out_dim * out_dim], slice_e + [-1])
+            m_matrix = trans_out[..., (out_dim * out_dim):]
 
             dist = MultiplicativeNormal(
                     q_init=q_init,

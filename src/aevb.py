@@ -5,9 +5,9 @@ import tensorflow as tf
 from tqdm import tqdm
 
 from distribution import MultiplicativeNormal, StateSpaceNormalDiag
-from dynamics import FLDS, DeepKalmanFilter, DeepKalmanDynamics, MLPDynamics
+from dynamics import FLDS, DeepKalmanFilter, DeepKalmanDynamics, MLPDynamics, KalmanFilter
 from model import Model, ReparameterizedDistribution
-from norm_flow import TimeAutoRegressivePlanarFlow
+from norm_flow import TimeAutoRegressivePlanarFlow, MultiLayerKalmanFlow
 from norm_flow_model import NormalizingFlowModel
 from transform import MultiLayerPerceptron as MLP
 
@@ -410,7 +410,7 @@ class FilteringNormalizingFlowVB(AutoEncodingVariationalBayes):
 
     def __init__(self, data, lat_dim, transition_layers, emission_layers,
             recognition_layers, n_flow_layers, residual=False, backward=False,
-            poisson=False,
+            poisson=False, condition_shared_units=0,
             optimizer=None, n_monte_carlo_samples=1, batch_size=1,
             full_covariance=True, order=1):
         """
@@ -459,19 +459,94 @@ class FilteringNormalizingFlowVB(AutoEncodingVariationalBayes):
 
         #TODO: have a single recognition network for MF params and NF params.
 
+        extra_dim = condition_shared_units
         base_model = ReparameterizedDistribution(
             out_dim=(self.time, self.lat_dim), in_dim=(self.time, self.obs_dim),
             distribution=StateSpaceNormalDiag, transform=MLP,
-            reparam_scale=True, hidden_units=recognition_layers)
+            reparam_scale=True, extra_dim=extra_dim,
+            hidden_units=recognition_layers)
 
         recon_model = NormalizingFlowModel(
             in_dim=(self.time, self.obs_dim), base_model=base_model,
             norm_flow_type=TimeAutoRegressivePlanarFlow,
             norm_flow_params={"num_layer": n_flow_layers, "backward": backward},
             transform_type=MLP,
-            transform_params={"hidden_units": recognition_layers})
+            transform_params={"hidden_units": recognition_layers}, share=extra_dim)
 
         super(FilteringNormalizingFlowVB, self).__init__(
+                data=data, generative_model=gen_model,
+                recognition_model=recon_model,
+                n_monte_carlo_samples=n_monte_carlo_samples,
+                batch_size=batch_size, optimizer=optimizer)
+
+
+class KalmanNormalizingFlowVB(AutoEncodingVariationalBayes):
+    """Class for Filtering Normalizing Flow Auto-Encoding Variational Bayes."""
+
+    def __init__(self, data, lat_dim, transition_layers, emission_layers,
+            recognition_layers, n_flow_layers, residual=False,
+            poisson=False, condition_shared_units=0,
+            optimizer=None, n_monte_carlo_samples=1, batch_size=1,
+            full_covariance=True, order=1):
+        """
+        params:
+        -------
+        data: numpy.ndarray
+            Shape of input is assumed to be (N, ...) where first dimensions
+            corresponds to each example and the rest is the shape of each input
+        transition_layers: list of int
+        emission_layers: list of int
+            If [], the transition is linear.
+        recognition_layers: list of int
+        n_flow_layers: int
+        residual: bool
+        backward: bool
+        poisson: bool
+            If False, the model is Gaussian. Otherwise, the emission model is
+            Poisson.
+        optimizer: tf.train.Optimizer
+            If None, by default AdamOptimizer with learning rate 0.001 will be
+            used.
+        n_monte_carlo_smaples: int
+            Number of monte-carlo examples to be used for estimation of ELBO.
+        batch_size: int
+            Batch size for stochastic estimation of ELBO.
+        """
+        self.lat_dim = lat_dim
+        _, self.time, self.obs_dim = data.shape
+        self.poisson = poisson
+
+        gen_model = None
+        if len(transition_layers) == 0:
+            # Linear model.
+            gen_model = FLDS(
+                    lat_dim=lat_dim, obs_dim=self.obs_dim,
+                    time_steps=self.time, full_covariance=full_covariance,
+                    order=order, poisson=self.poisson,
+                    nonlinear_transform=MLP, hidden_units=emission_layers)
+        else:
+            gen_model = MLPDynamics(
+                    lat_dim=self.lat_dim, obs_dim=self.obs_dim,
+                    time_steps=self.time, transition_layers=transition_layers,
+                    residual=residual, poisson=self.poisson,
+                    full_covariance=full_covariance, emission_transform=MLP,
+                    hidden_units=emission_layers)
+
+        extra_dim = condition_shared_units
+        base_model = ReparameterizedDistribution(
+            out_dim=(self.time, self.lat_dim), in_dim=(self.time, self.obs_dim),
+            distribution=StateSpaceNormalDiag, transform=MLP,
+            reparam_scale=True, extra_dim=extra_dim,
+            hidden_units=recognition_layers)
+
+        recon_model = NormalizingFlowModel(
+            in_dim=(self.time, self.obs_dim), base_model=base_model,
+            norm_flow_type=MultiLayerKalmanFlow,
+            norm_flow_params={'n_layer': n_flow_layers},
+            transform_type=MLP,
+            transform_params={"hidden_units": recognition_layers}, share=extra_dim)
+
+        super(KalmanNormalizingFlowVB, self).__init__(
                 data=data, generative_model=gen_model,
                 recognition_model=recon_model,
                 n_monte_carlo_samples=n_monte_carlo_samples,

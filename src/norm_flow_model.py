@@ -9,8 +9,8 @@ import numpy as np
 import tensorflow as tf
 
 from model import Model
-from norm_flow import NormalizingFlow, TimeAutoRegressivePlanarFlow
-from transform import Transform, MultiLayerPerceptron
+from norm_flow import NormalizingFlow, TimeAutoRegressivePlanarFlow, MultiLayerKalmanFlow
+from transform import Transform, MultiLayerPerceptron, LinearTransform
 
 
 class NormalizingFlowModel(Model):
@@ -22,7 +22,7 @@ class NormalizingFlowModel(Model):
     """
 
     def __init__(self, in_dim, base_model, norm_flow_type, norm_flow_params={},
-            transform_type=None, transform_params={}):
+            share=0, transform_type=None, transform_params={}):
         """Samples from the model and computes log probability of the samples.
 
         params:
@@ -108,7 +108,8 @@ class NormalizingFlowModel(Model):
         self.norm_flow_params = norm_flow_params
         self.transform_params = transform_params
         # conditioner transformation
-        self.conditioner = None
+        self.conditioner = []
+        self.share = share
 
     def get_normalizing_flow(self, y):
         """Gets the normalizing flow for conditional variable y.
@@ -141,10 +142,13 @@ class NormalizingFlowModel(Model):
             # determintes how many normalizing flow transforms in parallel is
             # needed.
 
-            param_shape = self.norm_flow_type.get_param_shape(
-                    dim=self.out_dim, **self.norm_flow_params)
+            # TODO: uncomment
+            #param_shape = self.norm_flow_type.get_param_shape(
+            #        dim=self.out_dim, **self.norm_flow_params)
 
             if self.norm_flow_type is TimeAutoRegressivePlanarFlow:
+                param_shape = self.norm_flow_type.get_param_shape(
+                        dim=self.out_dim, **self.norm_flow_params)
                 # the case of auto-regressive flow of has a specific treatment
                 # of input mapping to parameters of the flow.
                 trans_out_dim = param_shape[0] * param_shape[1] * param_shape[3] * param_shape[5]
@@ -153,14 +157,24 @@ class NormalizingFlowModel(Model):
                 time, space_dim = self.in_dim
                 # Two consecutive times
                 trans_in_dim = space_dim * 2
-                if self.conditioner is None:
-                    self.conditioner = self.transform_type(
-                            in_dim=trans_in_dim, out_dim=trans_out_dim,
-                            **self.transform_params)
-                # reshape input into consecutive time points
-                # turn y shape into time_consecutive tensor
-                gov_params = self.conditioner.operator(
-                        tf.concat([y[:, :-1], y[:, 1:]], axis=-1))
+                gov_params = None
+                if self.share > 0:
+                    if len(self.conditioner) == 0:
+                        self.conditioner.append(LinearTransform(
+                                in_dim=self.share, out_dim=trans_out_dim))
+                    hidden = self.base_model.extra_output[y]
+                    h1 = hidden[:, :-1]
+                    h2 = hidden[:, 1:]
+                    gov_params = self.conditioner[0].operator(h1 + h2)
+                else:
+                    if len(self.conditioner) == 0:
+                        self.conditioner.append(self.transform_type(
+                                in_dim=trans_in_dim, out_dim=trans_out_dim,
+                                **self.transform_params))
+                    # reshape input into consecutive time points
+                    # turn y shape into time_consecutive tensor
+                    gov_params = self.conditioner[0].operator(
+                            tf.concat([y[:, :-1], y[:, 1:]], axis=-1))
                 gov_params = tf.reshape(
                         gov_params,
                         (num_flow, param_shape[2]) + param_shape[:2] + param_shape[3:])
@@ -174,6 +188,55 @@ class NormalizingFlowModel(Model):
                             **self.norm_flow_params))
                 self.norm_flow_dict[y] = flows
                 return flows
+            elif self.norm_flow_type is MultiLayerKalmanFlow:
+                out_dim_ = self.out_dim[1]
+                # the case of auto-regressive flow of has a specific treatment
+                # of input mapping to parameters of the flow.
+                dsqr = out_dim_ * out_dim_
+                n_layer_ = self.norm_flow_params["n_layer"]
+                layer_size = (2 * dsqr + 2 * out_dim_)
+                trans_out_dim = n_layer_ * layer_size
+
+                time, space_dim = self.in_dim
+                gov_params = None
+                if self.share > 0:
+                    raise NotImplemented("Sharing for Kalman not implemented.")
+                else:
+                    if len(self.conditioner) == 0:
+                        self.conditioner.append(self.transform_type(
+                                in_dim=space_dim, out_dim=trans_out_dim,
+                                **self.transform_params))
+                    # reshape input into consecutive time points
+                    # turn y shape into time_consecutive tensor
+                    trans_out = self.conditioner[0].operator(y)
+                    # Separate the layers from each other
+                    trans_out = tf.reshape(
+                            trans_out,
+                            trans_out.shape.as_list()[:-1] + [n_layer_ , layer_size])
+
+                    h_1 = trans_out[..., :time - 1, :, dsqr:(2 * dsqr)]
+                    h_2 = trans_out[..., 1:, :, dsqr:(2 * dsqr)]
+                    comb = h_1 + h_2
+                    # Add a set of dead neurons for the last time step
+                    dead_shape = comb.shape.as_list()
+                    dead_shape[-3] = 1
+                    dead_ = tf.zeros(dead_shape, dtype=comb.dtype)
+                    comb = tf.concat([comb, dead_], axis=-3)
+                    gov_params = tf.concat([
+                        trans_out[..., :dsqr],
+                        comb,
+                        trans_out[..., (2 * dsqr):]], axis=-1)
+
+                # Construct each flow
+                flows = []
+                for i in range(num_flow):
+                    flows.append(self.norm_flow_type(
+                            dim=out_dim_, time=time, gov_param=gov_params[i],
+                            **self.norm_flow_params))
+                self.norm_flow_dict[y] = flows
+                return flows
+
+
 
             # The other straight forward cases
             # Compute the flattened parameter shape
@@ -181,11 +244,11 @@ class NormalizingFlowModel(Model):
             for dim in param_shape:
                 trans_out_dim *= dim
 
-            if self.conditioner is None:
-                self.conditioner = self.transform_type(
+            if len(self.conditioner) == 0:
+                self.conditioner.append(self.transform_type(
                         in_dim=self.in_dim, out_dim=trans_out_dim,
-                        **self.transform_params)
-            flow_params = self.conditioner.operator(y)
+                        **self.transform_params))
+            flow_params = self.conditioner[0].operator(y)
             # List of flows for inputs respective to the input y.
             flows = []
             for i in range(num_flow):
@@ -216,7 +279,6 @@ class NormalizingFlowModel(Model):
         num_flows = 0
         if y is not None:
             num_flows = y.shape[0].value
-        flows = self.get_normalizing_flow(y)
 
         if isinstance(self.base_model, Model):
             # Get sample and log prob according to the design of model.
@@ -250,6 +312,7 @@ class NormalizingFlowModel(Model):
                 samples_not = self.base_model.sample([n_samples, num_flows])
                 log_prob = self.base_model.log_prob(samples_not)
 
+        flows = self.get_normalizing_flow(y)
         if num_flows == 0:
             samples = flows.operator(samples_not)
             log_prob -= flows.log_det_jacobian(samples_not)
@@ -270,10 +333,11 @@ class NormalizingFlowModel(Model):
 
     def get_regularizer(self):
         """Returns a regularization for the model if it exists."""
-        base_regul = 0.
+        regul = 0.
         try:
-            base_regul += self.base_model.get_regularization()
+            regul += self.base_model.get_regularization()
         except:
             pass
-        return base_regul + self.conditioner.get_regularizer()
-
+        for cond in self.conditioner:
+            regul += cond.get_regularizer()
+        return regul 

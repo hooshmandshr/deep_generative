@@ -791,7 +791,7 @@ class MultiLayerKalmanFlow(NormalizingFlow):
         for i in range(self.n_layer):
             self.flows.append(
                     KalmanFlow(time=time, dim=dim, non_linearity=non_linearity,
-                        gov_param=self.var[i], lower=lower, name=name))
+                        gov_param=self.var[:, i], lower=lower, name=name))
         # Dictionary for keeping precomputed results
         self.mid_transform = {}
 
@@ -858,4 +858,4 @@ class MultiLayerKalmanFlow(NormalizingFlow):
         dim = kwargs["dim"]
         time = kwargs["time"]
         n_layer = kwargs["n_layer"]
-        return (n_layer, time, 2 * (dim * dim + dim))
+        return (time, n_layer, 2 * (dim * dim + dim))
