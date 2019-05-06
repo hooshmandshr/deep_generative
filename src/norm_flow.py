@@ -641,17 +641,21 @@ class KalmanFlow(NormalizingFlow):
         # Partition the variable into variables of the planar flow.
 
         self.lower = lower
-        self.diag_ = self.var[:time]
+        dsqr = dim * dim
+        self.diag_ = tf.reshape(
+                self.var[:, :dsqr], [time, dim, dim])
         if enforce_inverse:
             self.enforce_invertiblity()
-        offdiag_ = self.var[time:(2 * time - 1)]
+        offdiag_ = tf.reshape(
+                self.var[:(time - 1), dsqr:(2 * dsqr)],
+                [time - 1, dim, dim])
         self.a_matrix = BlockBiDiagonalMatrix(
                 diag_block=self.diag_, offdiag_block=offdiag_, lower=self.lower)
         self.bias = tf.expand_dims(
-                self.var[(2 * time - 1):(3 * time - 1), :, 0], axis=0)
+                self.var[:, (2 * dsqr):(2 * dsqr + dim)], axis=0)
         # Scale must be > -1 for the log-det-jac to be defined
         self.scale = tf.expand_dims(tf.nn.softplus(
-                self.var[(3 * time - 1):(4 * time - 1), :, 0]) - 1., axis=0)
+            self.var[:, (2 * dsqr + dim):(2 * (dsqr + dim))]) - 1., axis=0)
         # Tensor map for keeping track of computation redundancy.
         # If an operation on a tensor has been done before, do not redo it.
         self.tensor_map = {}
@@ -727,9 +731,10 @@ class KalmanFlow(NormalizingFlow):
         std = np.sqrt(2. / (2 * self.time * self.dim))
         init_val = np.random.normal(0, std, self.param_shape)
         # Bias initialization
-        init_val[(2 * self.time - 1):] *= 0.
+        dsqr = self.dim * self.dim
+        init_val[:, (2 * dsqr):] *= 0.
         # Scale initilization
-        init_val[(3 * self.time - 1):] += 1.
+        init_val[:, (2 * dsqr + self.dim):] += 1.
         self.var = tf.Variable(init_val)
 
     @staticmethod
@@ -737,4 +742,120 @@ class KalmanFlow(NormalizingFlow):
         """Gets the shape of the governing parameters of the transform."""
         dim = kwargs["dim"]
         time = kwargs["time"]
-        return (4 * time - 1, dim, dim)
+        return (time, 2 * (dim * dim + dim))
+
+
+class MultiLayerKalmanFlow(NormalizingFlow):
+
+    def __init__(self, time, dim, n_layer, non_linearity=tf.tanh,
+            gov_param=None, lower=True, name=None):
+        """Sets up the universal properties of any transformation function.
+
+        Governing parameters of the transformation is set in the constructor.
+
+        params:
+        -------
+        dim: int
+            dimensionality of the input code/variable and output variable.
+        gov_param: tf.Tensor
+            In case that parameters of the transformation are governed by
+            another tensor.
+        initial_value: numpy.ndarray
+            Initial value of the transformation variable.
+        enforce_inverse: bool
+            If true, the parameters are changed slightly to guarantee
+            invertibility.
+        lower: bool
+            If True the a_matrix is lower triangular, otherwise it will be
+            upper triangular.
+        """
+        self.time = time
+        super(MultiLayerKalmanFlow, self).__init__(dim=dim,
+                gov_param=gov_param, name=name)
+        # Set the rest of the attributes.
+        nl = non_linearity
+        if not(nl is tf.tanh or nl is tf.nn.sigmoid or nl is tf.nn.softplus):
+            raise NotImplemented(
+                    "Only {}, {}, {} non-linearities are compatible.".format(
+                        "tf.tanh", "tf.nn.sigmoid", "tf.nn.softplus"))
+
+        self.non_linearity = non_linearity
+        # Make sure the shape of the parameters is correct.
+        self.param_shape = MultiLayerKalmanFlow.get_param_shape(
+                time=time, dim=dim, n_layer=n_layer)
+        self.check_param_shape()
+
+        # Partition the variable into variables of the planar flow.
+        self.n_layer = n_layer
+        self.flows = []
+        for i in range(self.n_layer):
+            self.flows.append(
+                    KalmanFlow(time=time, dim=dim, non_linearity=non_linearity,
+                        gov_param=self.var[i], lower=lower, name=name))
+        # Dictionary for keeping precomputed results
+        self.mid_transform = {}
+
+    def operator(self, x):
+        """Given x applies the Planar flow transformation to the input.
+
+        params:
+        -------
+        x: tf.Tensor
+            Input tensor for which the transformation is computed.
+
+        returns:
+        --------
+        tf.Tensor.
+        """
+        if x in self.mid_transform:
+            # The result is at the end of the final level of already
+            # computed transform.
+            return self.mid_transform[x][-1]
+
+        self.mid_transform[x] = [x]
+        result = x
+        for flow in self.flows:
+            result = flow.operator(result)
+            self.mid_transform[x].append(result)
+        return result
+
+    def log_det_jacobian(self, x):
+        """Computes log-det-Jacobian for combination of inputs, flows.
+
+        params:
+        -------
+        x: tensorflow.Tensor
+            Input tensor for which the log-det-jacobian is computed.
+
+        returns:
+        --------
+        tf.Tensor for log-det-jacobian of the transformation given x.
+        """
+        result = 0.
+        if x not in self.mid_transform:
+            # Compute the mid level transforms first.
+            self.operator(x)
+        for i, flow in enumerate(self.flows):
+            result += flow.log_det_jacobian(self.mid_transform[x][i])
+        return result
+
+    def initializer(self):
+        """Default initializer of the transformation class."""
+
+        # Xaviar initializer unifrom for w parameter.
+        std = np.sqrt(2. / (2 * self.time * self.dim))
+        init_val = np.random.normal(0, std, self.param_shape)
+        # Bias initialization
+        dsqr = self.dim * self.dim
+        init_val[..., (2 * dsqr):] *= 0.
+        # Scale initilization
+        init_val[..., (2 * dsqr + self.dim):] += 1.
+        self.var = tf.Variable(init_val)
+
+    @staticmethod
+    def get_param_shape(**kwargs):
+        """Gets the shape of the governing parameters of the transform."""
+        dim = kwargs["dim"]
+        time = kwargs["time"]
+        n_layer = kwargs["n_layer"]
+        return (n_layer, time, 2 * (dim * dim + dim))
