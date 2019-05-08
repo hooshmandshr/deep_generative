@@ -522,6 +522,10 @@ class KalmanNormalizingFlowVB(AutoEncodingVariationalBayes):
         _, self.time, self.obs_dim = data.shape
         self.poisson = poisson
 
+        out_activation = None
+        if self.poisson:
+            out_activation = tf.exp
+
         gen_model = None
         if len(transition_layers) == 0:
             # Linear model.
@@ -536,7 +540,8 @@ class KalmanNormalizingFlowVB(AutoEncodingVariationalBayes):
                     time_steps=self.time, transition_layers=transition_layers,
                     residual=residual, poisson=self.poisson,
                     full_covariance=full_covariance, emission_transform=MLP,
-                    hidden_units=emission_layers)
+                    hidden_units=emission_layers,
+                    output_activation=out_activation)
 
         extra_dim = condition_shared_units
         base_model = ReparameterizedDistribution(
