@@ -472,7 +472,7 @@ class MLPDynamics(MarkovLatentDynamics):
 
     def __init__(self, lat_dim, obs_dim, time_steps, transition_layers,
             emission_transform, poisson=False, residual=False,
-            full_covariance=False, **kwargs):
+            full_covariance=False, order=1, **kwargs):
         """Sets up the parameters of the Kalman filter sets up super class.
 
         params:
@@ -492,10 +492,10 @@ class MLPDynamics(MarkovLatentDynamics):
             diagonal covariance.
         """
         if full_covariance:
-            q_init = tf.Variable(np.eye(lat_dim))
+            q_init = tf.Variable(np.eye(lat_dim * order))
             dist = tf.contrib.distributions.MultivariateNormalTriL
         else:
-            q_init = tf.Variable(np.ones(lat_dim))
+            q_init = tf.Variable(np.ones(lat_dim * order))
             dist = tf.contrib.distributions.MultivariateNormalDiag
 
         em_dist = dist
@@ -503,10 +503,10 @@ class MLPDynamics(MarkovLatentDynamics):
             em_dist = MultiPoisson
 
         # Prior distribution for initial point
-        prior = dist(np.zeros(lat_dim), q_init)
+        prior = dist(np.zeros(lat_dim * order), q_init)
         # Transition model.
         trans_model = ReparameterizedDistribution(
-                out_dim=lat_dim, in_dim=lat_dim,
+                out_dim=lat_dim, in_dim=lat_dim * order,
                 transform=MLP,
                 distribution=dist, reparam_scale=False,
                 hidden_units=transition_layers, residual=residual)
@@ -518,7 +518,8 @@ class MLPDynamics(MarkovLatentDynamics):
 
         super(MLPDynamics, self).__init__(
                 init_model=prior, transition_model=trans_model,
-                emission_model=emission_model, time_steps=time_steps)
+                emission_model=emission_model, time_steps=time_steps,
+                order=order)
 
 
 class DeepKalmanDynamics(MarkovLatentDynamics):

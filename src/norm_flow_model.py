@@ -206,6 +206,11 @@ class NormalizingFlowModel(Model):
                         self.conditioner.append(self.transform_type(
                                 in_dim=space_dim, out_dim=trans_out_dim,
                                 **self.transform_params))
+                        # Conditioner for off-diagonal blocks of the Matrix.
+                        self.conditioner.append(MultiLayerPerceptron(
+                            in_dim=(2 * dsqr), out_dim=dsqr,
+                            hidden_units=[2 * dsqr]))
+
                     # reshape input into consecutive time points
                     # turn y shape into time_consecutive tensor
                     trans_out = self.conditioner[0].operator(y)
@@ -214,9 +219,10 @@ class NormalizingFlowModel(Model):
                             trans_out,
                             trans_out.shape.as_list()[:-1] + [n_layer_ , layer_size])
 
-                    h_1 = trans_out[..., :time - 1, :, dsqr:(2 * dsqr)]
-                    h_2 = trans_out[..., 1:, :, dsqr:(2 * dsqr)]
-                    comb = h_1 + h_2
+                    h1 = trans_out[..., :time - 1, :, dsqr:(2 * dsqr)]
+                    h2 = trans_out[..., 1:, :, dsqr:(2 * dsqr)]
+                    comb = tf.concat([h1, h2], axis=-1)
+                    comb = self.conditioner[1].operator(comb)
                     # Add a set of dead neurons for the last time step
                     dead_shape = comb.shape.as_list()
                     dead_shape[-3] = 1
