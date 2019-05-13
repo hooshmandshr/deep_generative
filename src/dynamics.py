@@ -7,7 +7,7 @@ to easily sample from, compute density, etc.
 import numpy as np
 import tensorflow as tf
 
-from distribution import MultiPoisson, StateSpaceNormalDiag
+from distribution import MultiPoisson, MultiBernoulli, StateSpaceNormalDiag
 from model import Model, ReparameterizedDistribution
 from transform import LinearTransform, LSTMcell, GatedTransition
 from transform import MultiLayerPerceptron as MLP
@@ -429,7 +429,7 @@ class FLDS(LatentLinearDynamicalSystem):
     """Class for implementation of fLDS/pfLDS generative model."""
 
     def __init__(self, lat_dim, obs_dim, time_steps, nonlinear_transform,
-            init_transition_matrix_bias=None, poisson=False,
+            init_transition_matrix_bias=None, poisson=False, binary=False,
             full_covariance=True, order=1, **kwargs):
         """Sets up the parameters of the Kalman filter sets up super class.
 
@@ -450,6 +450,9 @@ class FLDS(LatentLinearDynamicalSystem):
 
         if poisson:
             dist = MultiPoisson
+        elif binary:
+            em_dist = MultiBernoulli
+
         if full_covariance:
             dist = tf.contrib.distributions.MultivariateNormalTriL
         else:
@@ -471,7 +474,7 @@ class MLPDynamics(MarkovLatentDynamics):
     """Class for implementation of ffDS/pffDS generative model."""
 
     def __init__(self, lat_dim, obs_dim, time_steps, transition_layers,
-            emission_transform, poisson=False, residual=False,
+            emission_transform, poisson=False, binary=False, residual=False,
             full_covariance=False, order=1, **kwargs):
         """Sets up the parameters of the Kalman filter sets up super class.
 
@@ -491,6 +494,7 @@ class MLPDynamics(MarkovLatentDynamics):
             Covariance matrices of noise processes are full if True. otherwise,
             diagonal covariance.
         """
+        self.full_covariance = full_covariance
         if full_covariance:
             q_init = tf.Variable(np.eye(lat_dim * order))
             dist = tf.contrib.distributions.MultivariateNormalTriL
@@ -501,6 +505,8 @@ class MLPDynamics(MarkovLatentDynamics):
         em_dist = dist
         if poisson:
             em_dist = MultiPoisson
+        elif binary:
+            em_dist = MultiBernoulli
 
         # Prior distribution for initial point
         prior = dist(np.zeros(lat_dim * order), q_init)
@@ -521,12 +527,26 @@ class MLPDynamics(MarkovLatentDynamics):
                 emission_model=emission_model, time_steps=time_steps,
                 order=order)
 
+    def get_regularizer(self):
+        """Regularizer for the dynamical system."""
+        base = super(MLPDynamics, self).get_regularizer()
+        return base
+        noise_scale = self.transition_model.scale_param
+        noise_regul = 0.
+        if self.full_covariance:
+            noise_regul = tf.linalg.trace(tf.matmul(
+                noise_scale, noise_scale, transpose_b=True))
+        else:
+            noise_regul = tf.reduce_sum(tf.square(noise_scale))
+        return base + 100. * noise_regul
+
+
 
 class DeepKalmanDynamics(MarkovLatentDynamics):
     """Class for implementation of gated transition generative model."""
 
     def __init__(self, lat_dim, obs_dim, time_steps, transition_units,
-            emission_layers, poisson=False):
+            emission_layers, poisson=False, binary=False):
         """Sets up the parameters of the Kalman filter sets up super class.
 
         params:
@@ -546,6 +566,8 @@ class DeepKalmanDynamics(MarkovLatentDynamics):
         em_dist = dist
         if poisson:
             em_dist = MultiPoisson
+        elif binary:
+            em_dist = MultiBernoulli
 
         # Prior distribution for initial point
         prior = dist(np.zeros(lat_dim), q_init)

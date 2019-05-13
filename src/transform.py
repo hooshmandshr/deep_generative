@@ -312,6 +312,8 @@ class MultiLayerPerceptron(Transform):
         return self.var
 
     def operator(self, x):
+        if len(self.hidden_units) == 0:
+            return x[..., :self.out_dim]
         output = x
         for layer in self.layers:
             output = layer.operator(output)

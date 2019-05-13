@@ -237,7 +237,7 @@ class FLDSVB(AutoEncodingVariationalBayes):
 
     def __init__(self, data, lat_dim, emission_transform,
             emission_transform_params, recognition_transform,
-            recognition_transform_params, poisson=False, optimizer=None,
+            recognition_transform_params, binary=False, optimizer=None,
             n_monte_carlo_samples=1, batch_size=1, full_covariance=True,
             shared_params=True):
         """
@@ -279,7 +279,7 @@ class FLDSVB(AutoEncodingVariationalBayes):
         gen_model = FLDS(
                 lat_dim=lat_dim, obs_dim=self.obs_dim, time_steps=self.time,
                 full_covariance=full_covariance,
-                poisson=self.poisson,
+                poisson=False, binary=binary,
                 nonlinear_transform=emission_transform,
                 **emission_transform_params)
 
@@ -358,7 +358,7 @@ class DeepKalmanVB(AutoEncodingVariationalBayes):
 
     def __init__(self, data, lat_dim, transition_hidden_dim,
             emission_layers, recon_hidden_dim,
-            mean_field=False, backward=True,
+            mean_field=False, backward=True, binary=False,
             optimizer=None, n_monte_carlo_samples=1, batch_size=1):
         """
         params:
@@ -392,7 +392,8 @@ class DeepKalmanVB(AutoEncodingVariationalBayes):
 
         gen_model = DeepKalmanDynamics(
             lat_dim=self.lat_dim, obs_dim=self.obs_dim, time_steps=self.time,
-            transition_units=self.gen_hid_dim, emission_layers=emission_layers)
+            transition_units=self.gen_hid_dim, emission_layers=emission_layers,
+            binary=binary)
 
         recon_model = DeepKalmanFilter(
             in_dim=self.obs_dim, out_dim=self.lat_dim, time_steps=self.time,
@@ -410,7 +411,7 @@ class FilteringNormalizingFlowVB(AutoEncodingVariationalBayes):
 
     def __init__(self, data, lat_dim, transition_layers, emission_layers,
             recognition_layers, n_flow_layers, residual=False, backward=False,
-            poisson=False, condition_shared_units=0,
+            poisson=False, binary=False, condition_shared_units=0,
             optimizer=None, n_monte_carlo_samples=1, batch_size=1,
             full_covariance=True, order=1):
         """
@@ -442,8 +443,10 @@ class FilteringNormalizingFlowVB(AutoEncodingVariationalBayes):
         self.poisson = poisson
 
         out_activation = None
+        activation = tf.nn.relu
         if self.poisson:
             out_activation = tf.exp
+            activation = tf.nn.tanh
 
         gen_model = None
         if len(transition_layers) == 0:
@@ -457,11 +460,11 @@ class FilteringNormalizingFlowVB(AutoEncodingVariationalBayes):
             gen_model = MLPDynamics(
                     lat_dim=self.lat_dim, obs_dim=self.obs_dim,
                     time_steps=self.time, transition_layers=transition_layers,
-                    residual=residual, poisson=self.poisson,
+                    residual=residual, poisson=self.poisson, binary=binary,
                     full_covariance=full_covariance, emission_transform=MLP,
                     order=order,
                     hidden_units=emission_layers,
-                    output_activation=out_activation)
+                    activation=activation, output_activation=out_activation)
 
         #TODO: have a single recognition network for MF params and NF params.
 
@@ -477,7 +480,8 @@ class FilteringNormalizingFlowVB(AutoEncodingVariationalBayes):
             norm_flow_type=TimeAutoRegressivePlanarFlow,
             norm_flow_params={"num_layer": n_flow_layers, "backward": backward},
             transform_type=MLP,
-            transform_params={"hidden_units": recognition_layers}, share=extra_dim)
+            transform_params={"hidden_units": recognition_layers, "activation": activation},
+            share=extra_dim)
 
         super(FilteringNormalizingFlowVB, self).__init__(
                 data=data, generative_model=gen_model,
