@@ -287,7 +287,7 @@ class ReparameterizedDistribution(Model):
 
         # Multivariate Bernoulli (independent variables).
         elif self.dist_class is MultiBernoulli:
-            probs_ = tf.nn.sigmoid(transforms[0].operator(y))
+            probs_ = transforms[0].operator(y)
             dist = self.dist_class(probs_)
 
         # Multivariate Normal With full covariance.
