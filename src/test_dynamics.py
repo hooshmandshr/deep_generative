@@ -4,7 +4,8 @@
 import numpy as np
 import tensorflow as tf
 
-from dynamics import KalmanFilter, MarkovDynamicsDiagnostics
+from dynamics import KalmanFilter, MarkovDynamicsDiagnostics, MLPDynamics
+from transform import MultiLayerPerceptron
 
 
 def test_kalman_filter(full_covar=False):
@@ -70,6 +71,64 @@ def test_kalman_filter(full_covar=False):
         assert grid_out[0].shape == (grid_size, 2, lat_dim)
 
 
+def test_mlp_dynamics():
+    """Tester for MLPDynamics and MarkovLatentDynamics in general."""
+    n_ex, dim, dim_o, time, n_sample = 2, 3, 4, 5, 6
+    with tf.Graph().as_default():
+        model = MLPDynamics(
+            lat_dim=dim, obs_dim=dim_o, time_steps=time,
+            transition_layers=[4],
+            emission_transform=MultiLayerPerceptron,
+            full_covariance=False,
+            hidden_units=[5])
+
+        x = np.ones([n_ex, time, dim_o])
+        y = np.ones([n_sample, n_ex, time, dim])
+
+        x_ = tf.constant(x)
+        y_ = tf.constant(y)
+        p = model.log_prob(x_, y_)
+
+        with tf.Session() as sess:
+            sess.run(tf.global_variables_initializer())
+            out = sess.run(p)
+    assert out.shape == (n_sample, n_ex)
+
+    with tf.Graph().as_default():
+        model = MLPDynamics(
+            lat_dim=dim, obs_dim=dim_o, time_steps=time,
+            transition_layers=[4],
+            emission_transform=MultiLayerPerceptron,
+            full_covariance=False,
+            hidden_units=[5])
+
+        x = np.ones([2, time, dim_o])
+        y = np.ones([2, time, dim])
+
+        x_ = tf.constant(x)
+        y_ = tf.constant(y)
+        p = model.log_prob(x_, y_)
+
+        x[1, 1] += 10
+        x_ = tf.constant(x)
+        p2 = model.log_prob(x_, y_)
+
+        y[0, 1] += 10
+        y_ = tf.constant(y)
+        p3 = model.log_prob(x_, y_)
+        with tf.Session() as sess:
+            sess.run(tf.global_variables_initializer())
+            out1 = sess.run(p)
+            out2 = sess.run(p2)
+            out3 = sess.run(p3)
+
+    assert out1[0] == out1[1]
+    assert out1[0] == out2[0]
+    assert not out2[0] == out2[1]
+    assert out2[1] == out3[1]
+    assert not out3[0] == out3[1]
+
 if __name__ == "__main__":
     test_kalman_filter(full_covar=False)
     test_kalman_filter(full_covar=True)
+    test_mlp_dynamics()

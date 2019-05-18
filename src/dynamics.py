@@ -62,12 +62,21 @@ class MarkovDynamics(Model):
             (?, T, D)
         """
         n_sample = x.shape[0].value
-        log_prob = self.init_model.log_prob(
-                tf.reshape(x[:, :self.order, :], [n_sample, -1]))
-        for i in range(self.order, self.time_steps):
-            y = tf.reshape(x[:, i - self.order:i, :], [n_sample, -1])
-            log_prob += self.transition_model.log_prob(
-                    x=x[:, i, :], y=y)
+        x_init = [x[..., i, :] for i in range(self.order)]
+        x_pre = [x[..., (0 + i):(-self.order + i), :] for i in range(self.order)]
+        if self.order == 1:
+            x_init = x_init[0]
+            x_pre = x_pre[0]
+        else:
+            x_init = tf.concat(x_init, axis=-1)
+            x_pre = tf.concat(x_init, axis=-1)
+
+        log_prob = self.init_model.log_prob(x_init)
+        log_prob += tf.reduce_sum(
+                self.transition_model.log_prob(
+                    x=x[..., self.order:, :],
+                    y=x_pre),
+                axis=-1)
         return log_prob
 
     def sample(self, n_samples, init_states=None, time_steps=None,
@@ -157,7 +166,8 @@ class TimeVariantDynamics(Model):
                         transform=MLP,
                         distribution=self.dist_type,
                         hidden_units=trans_hidden_units))
-        super(TimeVariantDynamics, self).__init__(out_dim=self.state_dim * time_steps)
+        super(TimeVariantDynamics, self).__init__(
+                out_dim=self.state_dim * time_steps)
 
     def sample(self, n_samples):
         """Log probability of the dynamics model p(x) = p(x1, x2, ...).
@@ -188,6 +198,7 @@ class TimeVariantDynamics(Model):
         for t, model in enumerate(self.time_transition_model):
             log_prob += model.log_prob(x=x[:, t + 1], y=x[:, t])
         return log_prob
+
 
 class MarkovLatentDynamics(MarkovDynamics):
     """Class for expressing Laten Markov dynamics."""
@@ -237,23 +248,23 @@ class MarkovLatentDynamics(MarkovDynamics):
         tf.Tensor with shape (?), corresponding to the log-probability of
         joint-distribution given the input.
         """
-        out_shape = None
-        if not x.shape[:-2] == y.shape[:-2]:
-            if len(x.shape) + 1 == len(y.shape):
-                out_shape = y.shape[0].value
-                x = tf.reshape(tf.concat(
-                        [tf.expand_dims(x, axis=0) for i in range(out_shape)],
-                        axis=0), [-1] + x.shape[-2:].as_list())
-                y = tf.reshape(y, [-1] + y.shape[-2:].as_list())
-            else:
-                raise ValueError("Shape of inputs x, y does not match.")
+        log_p = None
+        if not(x.shape[-3:-1] == y.shape[-3:-1]):
+            raise ValueError("Shape of inputs x, y does not match.")
+        if len(x.shape) == 3 and len(y.shape) == 3:
+            log_p = tf.reduce_sum(self.emission_model.log_prob(
+                x=x, y=y), axis=-1)
+        elif len(x.shape) == 3 and len(y.shape) == 4:
+            log_p = []
+            for i in range(x.shape[0].value):
+                log_p.append(tf.reduce_sum(self.emission_model.log_prob(
+                    x=x[i:i+1], y=y[:, i:i+1]), axis=-1))
+            log_p = tf.concat(log_p, axis=1)
+        else:
+            raise ValueError("Shape of inputs x, y does not match.")
 
-        prior_log_prob = super(MarkovLatentDynamics, self).log_prob(x=y)
-        log_p = tf.reduce_sum(self.emission_model.log_prob(
-                x=x, y=y)) + prior_log_prob
-        if out_shape is not None:
-            return tf.reshape(log_p, [out_shape, -1])
-        return log_p
+        # Add prior
+        return log_p + super(MarkovLatentDynamics, self).log_prob(x=y)
 
     def sample(self, n_samples, init_states=None, y=None, time_steps=None,
             stochastic=True):

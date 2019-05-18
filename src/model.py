@@ -170,7 +170,7 @@ class ReparameterizedDistribution(Model):
         if self.dist_class is MultiplicativeNormal: 
             in_time, in_dim = self.in_dim
             time, out_dim = self.out_dim
-            # Parameters of the C matrix and M matrix.
+            # Parameters of the C matrix and M matrix share network.
             self.transforms.append(self.transform_class(
                 in_dim=in_dim,
                 out_dim=out_dim * out_dim + out_dim,
@@ -181,24 +181,26 @@ class ReparameterizedDistribution(Model):
                 in_dim=self.in_dim[1],
                 out_dim=self.out_dim[1] * 2 + self.extra_dim,
                 **self.trans_args))
-        else: 
-            self.transforms.append(self.transform_class(
-                in_dim=self.in_dim, out_dim=self.out_dim,
-                **self.trans_args))
-
-        # Reparameteriz scale if needed.
-        if self.reparam_scale == True:
-            if self.dist_class is DIAG_GAUSSIAN or\
-                    self.dist_class is LogitNormalDiag:
-                # Diagonal Covariance.
+        else:
+            # Other distributions.
+            if self.reparam_scale is not True:
+                # Scale parameter of the distribution is free or constant.
                 self.transforms.append(self.transform_class(
                     in_dim=self.in_dim, out_dim=self.out_dim,
                     **self.trans_args))
-            # Multivariate Normal With full covariance.
-            elif self.dist_class is FULL_GAUSSIAN:
-                # Cholesky factor of the covariance matrix.
+            else:
+                # main parameter and scale of distribution share network.
+                if self.dist_class is DIAG_GAUSSIAN or\
+                        self.dist_class is LogitNormalDiag:
+                    # Mean + Diagonal Covariance.
+                    trans_out_dim = 2 * self.out_dim
+                # Multivariate Normal With full covariance.
+                elif self.dist_class is FULL_GAUSSIAN:
+                    # Mean + Cholesky factor of the covariance matrix.
+                    trans_out_dim = self.out_dim + self.out_dim * self.out_dim
                 self.transforms.append(self.transform_class(
-                    in_dim=self.in_dim, out_dim=self.out_dim * self.out_dim,
+                    in_dim=self.in_dim,
+                    out_dim=trans_out_dim,
                     **self.trans_args))
 
         return self.transforms
@@ -239,28 +241,21 @@ class ReparameterizedDistribution(Model):
                 return dist
             # Rectify standard deviation so that it is a smooth
             # positive function
-            loc_ = transforms[0].operator(y)
-            scale_ = self.reparam_scale
+            out_ = transforms[0].operator(y)
+            loc_ = out_
+            scale_ = self.scale_param
             if self.reparam_scale is True:
-                scale_ = tf.nn.softplus(transforms[1].operator(y))
-            else:
-                if self.reparam_scale is False:
-                    if self.scale_param is None:
-                        scale_ = tf.Variable(
-                                np.zeros(self.out_dim), dtype=loc_.dtype)
-                        self.scale_param = scale_
-                    else:
-                        scale_ = self.scale_param
-                tot_unique_dist = 1
-                for dim in loc_.shape[:-1]:
-                    tot_unique_dist *= dim.value
-                scale_ = [tf.expand_dims(
-                    scale_, axis=0) for i in range(tot_unique_dist)]
-                scale_ = tf.concat(scale_, axis=0)
-                scale_shape = loc_.shape[:-1].as_list(
-                        ) + [self.out_dim]
-                scale_ = tf.nn.softplus(tf.reshape(scale_, scale_shape))
-
+                loc_, scale_ = out_[..., :self.out_dim], out_[..., self.out_dim:]
+            elif scale_ is None and self.reparam_scale is False:
+                # Initialize a free scale param.
+                scale_ = tf.Variable(
+                        np.zeros(self.out_dim), dtype=loc_.dtype)
+                self.scale_param = scale_
+            elif self.scale_param is None:
+                # standard devition is given.
+                scale_ = self.reparam_scale
+            # Ensure that std is positive.
+            scale_ = tf.nn.softplus(scale_)
             dist = self.dist_class(loc=loc_, scale_diag=scale_)
 
         elif self.dist_class is StateSpaceNormalDiag:
@@ -292,30 +287,22 @@ class ReparameterizedDistribution(Model):
 
         # Multivariate Normal With full covariance.
         elif self.dist_class is FULL_GAUSSIAN:
-            loc_ = transforms[0].operator(y)
-            cov_ = self.reparam_scale
+            out_ = transforms[0].operator(y)
+            loc_ = out_
+            cov_ = self.scale_param
             if self.reparam_scale is True:
-                cov_ = transforms[1].operator(y)
-                cov_ = tf.reshape(cov_, [-1, self.out_dim, self.out_dim])
-            else:
-                if self.reparam_scale is False:
-                    if self.scale_param is None:
-                        cov_ = tf.Variable(
-                                np.eye(self.out_dim), dtype=loc_.dtype)
-                        self.scale_param = cov_
-                    else:
-                        cov_ = self.scale_param
-                # The covariance should have the same shape as the mean
-                tot_unique_dist = 1
-                for dim in loc_.shape[:-1]:
-                    tot_unique_dist *= dim.value
-                cov_ = [tf.expand_dims(
-                    cov_, axis=0) for i in range(tot_unique_dist)]
-                cov_ = tf.concat(cov_, axis=0)
-                cov_shape = loc_.shape[:-1].as_list(
-                        ) + [self.out_dim, self.out_dim]
-                cov_ = tf.reshape(cov_, cov_shape)
-
+                loc_, cov_ = out_[..., :self.out_dim], out_[..., self.out_dim:]
+                cov_ = tf.reshape(
+                        cov_,
+                        cov_.shape.as_list()[:-1] + [self.out_dim, self.out_dim])
+            elif cov_ is None and self.reparam_scale is False:
+                # create a free parameter for covariance.
+                cov_ = tf.Variable(
+                        np.eye(self.out_dim), dtype=loc_.dtype)
+                self.scale_param = cov_
+            elif self.scale_param is None:
+                # Covariance is given.
+                cov_ = self.reparam_scale
             dist = self.dist_class(loc=loc_, scale_tril=cov_)
 
         # MultiplicativeNormal for LDS models.

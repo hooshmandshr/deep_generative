@@ -51,8 +51,10 @@ class Transform(object):
         """
         if self.var is not None:
             if not self.var.shape == self.param_shape:
-                raise ValueError("gov_param tensor's shape must be {}".format(
-                    self.param_shape))
+                msg = "gov_param tensor's shape must be {}".format(
+                        self.param_shape)
+                msg += " instead it is {}".format(self.var.shape)
+                raise ValueError(msg)
         elif self.initial_value is None:
             self.initializer()
         else:
@@ -258,7 +260,7 @@ class MultiLayerPerceptron(Transform):
 
     def __init__(self, in_dim, out_dim, hidden_units,
             activation=tf.nn.relu, residual=False, output_activation=None,
-            name=None):
+            drop_out_rate=None, name=None):
         """
         Sets up the layers of the MLP transformation.
 
@@ -274,22 +276,29 @@ class MultiLayerPerceptron(Transform):
         super(MultiLayerPerceptron, self).__init__(
                 in_dim=in_dim, out_dim=out_dim, name=name)
 
+        if isinstance(activation, list):
+            if not len(activation) == len(hidden_units):
+                msg = "activation and hidden_units must be of same length."
+                raise ValueError(msg)
         self.activation = activation
         self.out_activation = output_activation
         self.hidden_units = hidden_units
         # List that will containt the individual transformation for each layer.
         self.layers = []
-        activation = self.activation
+        activ_ = self.activation
         for i, n_units in enumerate(hidden_units + [self.out_dim]):
             # Apply output layers non-linearity for if it is the last layer.
             if i == len(hidden_units):
-                activation = self.out_activation
+                activ_ = self.out_activation
+            elif isinstance(self.activation, list):
+                activ_ = self.activation[i]
             layer_t = LinearTransform(
                     in_dim=in_dim, out_dim=n_units,
-                    non_linearity=activation)
+                    non_linearity=activ_)
             self.layers.append(layer_t)
             in_dim = n_units
         self.residual = residual
+        self.drop_out_rate = drop_out_rate
 
     def get_regularizer(self, scale=1.):
         """Regularizer for the weights of the multilayer perceptron."""
@@ -315,8 +324,12 @@ class MultiLayerPerceptron(Transform):
         if len(self.hidden_units) == 0:
             return x[..., :self.out_dim]
         output = x
-        for layer in self.layers:
+        for i, layer in enumerate(self.layers):
             output = layer.operator(output)
+            if self.drop_out_rate is not None and i <= len(self.hidden_units):
+                # only for hidden_layers
+                keep_prob = 1 - self.drop_out_rate
+                output = tf.nn.dropout(output, keep_prob=keep_prob)
         if self.residual:
             return x + output
         return output

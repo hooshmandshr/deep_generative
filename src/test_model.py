@@ -9,6 +9,44 @@ from model import ReparameterizedDistribution
 from transform import LinearTransform, MultiLayerPerceptron
 
 
+def test_reparam_gaussian_diag_covar():
+    """Tester for correctness of linear transformation."""
+
+    in_dim = 3
+    out_dim = 2
+    n_sample = 1000
+
+    tot_dist = 2
+    input_ = np.random.rand(tot_dist, in_dim)
+    dist = tf.contrib.distributions.MultivariateNormalDiag
+
+    with tf.Graph().as_default():
+        input_tensor = tf.constant(input_)
+        d_1 = ReparameterizedDistribution(
+                out_dim=out_dim, in_dim=in_dim,
+                distribution=dist, transform=LinearTransform,
+                reparam_scale=True)
+        d_2 = ReparameterizedDistribution(
+                out_dim=out_dim, in_dim=in_dim,
+                distribution=dist, transform=LinearTransform,
+                reparam_scale=False)
+        s_1 = d_1.sample(n_samples=n_sample, y=input_tensor)
+        # Repeat for testing sampling multiple times.
+        s_1 = d_1.sample(n_samples=n_sample, y=input_tensor)
+        s_2 = d_2.sample(n_samples=n_sample, y=input_tensor)
+        s_2 = d_2.sample(n_samples=n_sample, y=input_tensor)
+
+        cov_2 = d_2.get_distribution(y=input_tensor).covariance()
+        with tf.Session() as sess:
+            sess.run(tf.global_variables_initializer())
+            tf_res = sess.run([s_1, s_2])
+
+    expected_shape = (n_sample, tot_dist, out_dim)
+    print("Testing the shape of the samples.")
+    for i in range(2):
+        assert tf_res[i].shape == expected_shape, "sample shape not correct."
+
+
 def test_reparam_gaussian_full_covar():
     """Tester for correctness of linear transformation."""
 
@@ -31,6 +69,9 @@ def test_reparam_gaussian_full_covar():
                 distribution=dist, transform=LinearTransform,
                 reparam_scale=False)
         s_1 = d_1.sample(n_samples=n_sample, y=input_tensor)
+        # Repeat for testing sampling multiple times.
+        s_1 = d_1.sample(n_samples=n_sample, y=input_tensor)
+        s_2 = d_2.sample(n_samples=n_sample, y=input_tensor)
         s_2 = d_2.sample(n_samples=n_sample, y=input_tensor)
 
         cov_2 = d_2.get_distribution(y=input_tensor).covariance()
@@ -43,8 +84,6 @@ def test_reparam_gaussian_full_covar():
     print("Testing the shape of the samples.")
     for i in range(2):
         assert tf_res[i].shape == expected_shape, "sample shape not correct."
-    print("Testing that the covariance of the distributions are all the same.")
-    assert np.allclose(tf_cov[0][0], tf_cov[0][1])
 
 
 def test_state_space_normal_diag():
@@ -76,5 +115,6 @@ def test_state_space_normal_diag():
 
 
 if __name__ == "__main__":
+    test_reparam_gaussian_diag_covar()
     test_reparam_gaussian_full_covar()
     test_state_space_normal_diag()

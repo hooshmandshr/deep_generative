@@ -17,7 +17,7 @@ class AutoEncodingVariationalBayes(object):
 
     def __init__(self, data, generative_model, recognition_model, prior=None,
             optimizer=None, n_monte_carlo_samples=1, batch_size=1,
-            reg_coeff=0.01):
+            drop_out=None, reg_coeff=0.01):
         """
         params:
         -------
@@ -94,10 +94,11 @@ class AutoEncodingVariationalBayes(object):
                 mc_samples_log_prob = self.rec_model.log_prob(
                         x=mc_samples, y=self.batch)
 
-            entropy = -tf.reduce_mean(mc_samples_log_prob, axis=-1)
+            entropy = - tf.reduce_mean(mc_samples_log_prob, axis=0)
+
         self.entropy = entropy
 
-        self.elbo = tf.reduce_mean(self.expected_likelihood + self.entropy)
+        self.elbo = tf.reduce_mean(self.expected_likelihood + self.entropy, axis=0)
         # Reconstruction of data
         self.codes = mc_samples
         self.recon = self.gen_model.sample(n_samples=self.sample_size, y=mc_samples)
