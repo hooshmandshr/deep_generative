@@ -259,9 +259,6 @@ class FLDSVB(AutoEncodingVariationalBayes):
             inference/recognition network.
         recognition_transform_params: dict
             Arguments to be passed to the recognition transform.
-        poisson: bool
-            If False, the model is Gaussian. Otherwise, the emission model is
-            Poisson.
         optimizer: tf.train.Optimizer
             If None, by default AdamOptimizer with learning rate 0.001 will be
             used.
@@ -276,7 +273,6 @@ class FLDSVB(AutoEncodingVariationalBayes):
         """
         self.lat_dim = lat_dim
         _, self.time, self.obs_dim = data.shape
-        self.poisson = poisson
         gen_model = FLDS(
                 lat_dim=lat_dim, obs_dim=self.obs_dim, time_steps=self.time,
                 full_covariance=full_covariance,
@@ -349,8 +345,10 @@ class PFLDSVB(FLDSVB):
                 emission_transform=MLP,
                 emission_transform_params=gen_mlp_params,
                 recognition_transform=MLP,
-                recognition_transform_params=rec_mlp_params, poisson=True,
-                optimizer=optimizer, n_monte_carlo_samples=1, batch_size=1,
+                recognition_transform_params=rec_mlp_params,
+                optimizer=optimizer,
+                n_monte_carlo_samples=n_monte_carlo_samples,
+                batch_size=batch_size,
                 full_covariance=full_covariance, shared_params=True)
 
 
@@ -496,7 +494,7 @@ class KalmanNormalizingFlowVB(AutoEncodingVariationalBayes):
 
     def __init__(self, data, lat_dim, transition_layers, emission_layers,
             recognition_layers, n_flow_layers, residual=False,
-            poisson=False, condition_shared_units=0,
+            poisson=False, binary=False, condition_shared_units=0,
             optimizer=None, n_monte_carlo_samples=1, batch_size=1,
             full_covariance=True, order=1):
         """
@@ -543,7 +541,7 @@ class KalmanNormalizingFlowVB(AutoEncodingVariationalBayes):
             gen_model = MLPDynamics(
                     lat_dim=self.lat_dim, obs_dim=self.obs_dim,
                     time_steps=self.time, transition_layers=transition_layers,
-                    residual=residual, poisson=self.poisson,
+                    residual=residual, poisson=self.poisson, binary=binary,
                     full_covariance=full_covariance, emission_transform=MLP,
                     hidden_units=emission_layers,
                     output_activation=out_activation)

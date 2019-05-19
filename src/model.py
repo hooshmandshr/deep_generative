@@ -353,6 +353,7 @@ class ReparameterizedDistribution(Model):
 
             # c_matrix should be semi-positive definite
             trans_out = transforms[0].operator(y)
+            shape_ = trans_out.shape.as_list()
             c_matrix = trans_out[..., :(out_dim * out_dim)]
             c_matrix = tf.linalg.band_part(
                     tf.reshape(c_matrix, shape_[:-1] + [out_dim, out_dim]),
