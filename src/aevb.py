@@ -111,7 +111,8 @@ class AutoEncodingVariationalBayes(object):
         self.recon = self.gen_model.mean(y=mc_samples)
         self.model_samples = None
         if self.prior is None:
-            self.model_samples = self.gen_model.sample(self.sample_size)
+            self.model_samples = self.gen_model.sample(
+                    self.sample_size, noisy_obs=False)
         else:
             self.model_samples = self.gen_model.sample(
                     n_samples=(), y=self.prior.sample(self.sample_size))
