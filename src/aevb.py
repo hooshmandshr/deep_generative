@@ -17,7 +17,7 @@ class AutoEncodingVariationalBayes(object):
 
     def __init__(self, data, generative_model, recognition_model, prior=None,
             optimizer=None, n_monte_carlo_samples=1, batch_size=1,
-            drop_out=None, reg_coeff=0.01):
+            drop_out=None, reg_coeff=0.01, clip_gradients=False):
         """
         params:
         -------
@@ -59,7 +59,14 @@ class AutoEncodingVariationalBayes(object):
         self.get_elbo()
         regularizer = self.gen_model.get_regularizer()
         regularizer += self.rec_model.get_regularizer()
-        self.train_op = self.opt.minimize(-self.elbo + reg_coeff * regularizer)
+        self.cost = -self.elbo + reg_coeff * regularizer
+        if clip_gradients:
+            gvs = optimizer.compute_gradients(self.cost)
+            capped_gvs = [
+                    (tf.clip_by_norm(grad, 1.), var) for grad, var in gvs]
+            self.train_op = optimizer.apply_gradients(capped_gvs)
+        else:
+            self.train_op = self.opt.minimize(self.cost)
         # Indicate that there is no open session.
         self.sess = None
         # shuffled indices
@@ -101,7 +108,13 @@ class AutoEncodingVariationalBayes(object):
         self.elbo = tf.reduce_mean(self.expected_likelihood + self.entropy, axis=0)
         # Reconstruction of data
         self.codes = mc_samples
-        self.recon = self.gen_model.sample(n_samples=self.sample_size, y=mc_samples)
+        self.recon = self.gen_model.mean(y=mc_samples)
+        self.model_samples = None
+        if self.prior is None:
+            self.model_samples = self.gen_model.sample(self.sample_size)
+        else:
+            self.model_samples = self.gen_model.sample(
+                    n_samples=(), y=self.prior.sample(self.sample_size))
 
         return self.elbo
 
@@ -179,9 +192,6 @@ class AutoEncodingVariationalBayes(object):
     def get_codes(self, examples):
         """Get samples from the recognition model for particular examples.
 
-        Both examples and idxs must not be None and examples has precedence
-        over idxs.
-
         params:
         -------
         examples: numpy.ndarray
@@ -206,9 +216,6 @@ class AutoEncodingVariationalBayes(object):
     def get_reconstructions(self, examples):
         """Get reconstructions for particular examples of the dataset.
 
-        Both examples and idxs must not be None and examples has precedence
-        over idxs.
-
         params:
         -------
         examples: numpy.ndarray
@@ -216,8 +223,7 @@ class AutoEncodingVariationalBayes(object):
             (i.e. first dimension).
 
         returns:
-        numpy.ndarray of codes corresponding to the examples.
- 
+        numpy.ndarray of reconstructions corresponding to the examples.
         """
         self.check_examples_shape(examples)
         input_size = examples.shape[0]
@@ -231,6 +237,14 @@ class AutoEncodingVariationalBayes(object):
                     feed_dict={"input:0": input_})
             recs.append(rec[:, 0])
         return np.array(recs)
+
+    def get_samples(self):
+        """Get samples from the generative models.
+
+        returns:
+        numpy.ndarray of samples from the generative model.
+        """
+        return self.sess.run(self.model_samples)
 
 
 class FLDSVB(AutoEncodingVariationalBayes):

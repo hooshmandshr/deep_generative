@@ -30,7 +30,8 @@ class TrajectoryPlot(object):
         self.pca = PCA(n_components=self.dim)
         self.pca.fit(data.reshape([-1, self.dim]))
 
-    def plot(self, axes=[0], plt_ax=None, PCA=True, data=None, **kwargs):
+    def plot(self, axes=[0], plt_ax=None, PCA=True, data=None,
+            ax_label=False, **kwargs):
         """Plots the samples on the specified axes.
 
         params:
@@ -87,9 +88,10 @@ class TrajectoryPlot(object):
                         **kwargs)
                 ax.scatter(data_[i, 0, 0], data_[i, 0, 1], data_[i, 0, 2],
                         **kwargs)
-                ax.set_xlabel(ax_str.format(axes[0] + 1))
-                ax.set_ylabel(ax_str.format(axes[1] + 1))
-                ax.set_zlabel(ax_str.format(axes[2] + 1))
+                if ax_label:
+                    ax.set_xlabel(ax_str.format(axes[0] + 1))
+                    ax.set_ylabel(ax_str.format(axes[1] + 1))
+                    ax.set_zlabel(ax_str.format(axes[2] + 1))
 
 
 class Diagnostics(object):

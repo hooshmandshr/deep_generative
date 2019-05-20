@@ -111,6 +111,9 @@ class ReparameterizedDistribution(Model):
         self.dist_class = distribution
         self.transform_class = transform
         self.reparam_scale = reparam_scale
+        if self.dist_class is MultiBernoulli:
+            # Bernoulli does not have a scale.
+            self.reparam_scale = False
         self.scale_param = None
         # This list containts any concrete computation graph for this
         # reparametrized distribution given different inputs.
@@ -143,6 +146,7 @@ class ReparameterizedDistribution(Model):
         # Extra outputs for the non-linear model.
         self.extra_dim = extra_dim
         self.extra_output = {}
+        self.get_transforms()
 
     def get_transforms(self):
         """Initializes or gets the transformations necessary for reparam.
@@ -373,6 +377,16 @@ class ReparameterizedDistribution(Model):
         self.dist_dict[y] = dist
         return dist
 
+    def mean(self, y):
+        """Mean of the distribution/model given y.
+
+        Returns:
+        --------
+            tensorflow.Tensor that contains the mean of x given input y.
+        """
+        transforms = self.get_transforms()[0]
+        return transforms.operator(y)[..., :self.out_dim]
+
     def log_prob(self, x, y):
         """Computes log probability of x under reparam distribution.
 
@@ -425,4 +439,3 @@ class ReparameterizedDistribution(Model):
         for transform in self.get_transforms():
             reg += transform.get_regularizer(**kwargs)
         return reg
-

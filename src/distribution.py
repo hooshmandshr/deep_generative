@@ -13,10 +13,11 @@ class LogitNormal(tf.distributions.Normal):
     def __init__(self, loc, scale):
         super(LogitNormal, self).__init__(loc=loc, scale=scale)
 
-    def log_prob(self, value, name='log_prob'):
-        logit_value = tf.log(value / (1 - value))
+    def log_prob(self, logit_value=None, value=None, name='log_prob'):
+        if logit_value is None:
+            logit_value = tf.log(value) - tf.log(1 - value)
         log_prob = super(LogitNormal, self).log_prob(logit_value, name=name)
-        return log_prob - tf.log(value) - tf.log(1 - value)
+        return log_prob + logit_value + 2 * tf.nn.softplus(- logit_value)
 
     def sample(self, sample_shape=(), seed=None, name='sample'):
             sample = super(LogitNormal, self).sample(
@@ -30,10 +31,10 @@ class LogitNormalDiag(LogitNormal):
     def __init__(self, loc, scale_diag):
         super(LogitNormalDiag, self).__init__(loc=loc, scale=scale_diag)
 
-    def log_prob(self, value, name='log_prob'):
+    def log_prob(self, logit_value=None, value=None, name='log_prob'):
         """Sum of log-prob of independent logit-normal in the last axis."""
         log_prob = super(LogitNormalDiag, self).log_prob(
-                value=value, name=name)
+                logit_value=logit_value, value=value, name=name)
         return tf.reduce_sum(log_prob, axis=-1)
 
 

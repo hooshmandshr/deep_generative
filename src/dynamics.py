@@ -267,16 +267,22 @@ class MarkovLatentDynamics(MarkovDynamics):
         return log_p + super(MarkovLatentDynamics, self).log_prob(x=y)
 
     def sample(self, n_samples, init_states=None, y=None, time_steps=None,
-            stochastic=True):
+            stochastic=True, noisy_obs=True):
         """Samples from the full-joint model p(x, y).
 
         params:
         -------
         n_samples: int
+        init_states: tf.Tensor
         y: tf.Tensor or None
             if None, a sample is drawn from the joint distribution p(x, y).
             Otherwise, samples are drawn from conditional p(x|y).
         time_teps: int
+        stochastic: bool
+            If True, the dynamics is evovled stochastically.
+        noisy_obs: bool
+            If True, the observations are samples. Else, mean observation
+            is used.
 
         returns:
         --------
@@ -290,8 +296,12 @@ class MarkovLatentDynamics(MarkovDynamics):
             latent_path = super(MarkovLatentDynamics, self).sample(
                     n_samples=n_samples, init_states=init_states,
                     time_steps=time_steps, stochastic=stochastic)
-        observation_path = self.emission_model.sample(
-            n_samples=(), y=latent_path)
+        observation_path = None
+        if not noisy_obs:
+            observation_path = self.emission_model.mean(y=latent_path)
+        else:
+            observation_path = self.emission_model.sample(
+                n_samples=(), y=latent_path)
 
         if y is not None:
             return observation_path
@@ -303,11 +313,28 @@ class MarkovLatentDynamics(MarkovDynamics):
                 init_model=self.init_model, transition_model=self.transition_model,
                 time_steps=self.time_steps, order=self.order)
 
+    def mean(self, y):
+        """Mean of the conditional p(x|y).
+
+        params:
+        -------
+        y: tf.Tensor or None
+            if None, a sample is drawn from the joint distribution p(x, y).
+            Otherwise, samples are drawn from conditional p(x|y).
+
+        returns:
+        --------
+        tuple of tf.Tensor. Respectively, samples from the states in the
+        latent space and states from the observation space.
+        """
+        return self.emission_model.mean(y=y)
+
     def get_regularizer(self):
         """Regularizer for the dynamical system."""
         regul = self.transition_model.get_regularizer()
         regul += self.emission_model.get_regularizer()
         return regul
+
 
 class LatentLinearDynamicalSystem(MarkovLatentDynamics):
     """Class for implementation of Kalman-Filter generative model."""
@@ -659,7 +686,7 @@ class MarkovDynamicsDiagnostics(object):
         extrapolate_tensor = self.dynamics.sample(
                 n_samples=n_init_points,
                 init_states=init_tensor, time_steps=time_forward,
-                stochastic=stochastic)
+                stochastic=stochastic, noisy_obs=False)
         return init_tensor, extrapolate_tensor
 
     def run_extrapolate(self, session, states, name="default"):
